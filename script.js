@@ -49,7 +49,6 @@ class Field {
 	constructor(...transformations) {
 		this.validate(transformations);
 		
-		this.generators = generators;
 		this.numDimensions = transformations.length;
 		this.transformations = Array(transformations.length).fill().map((_, index) => [transformations[index]]);
 	}
@@ -81,20 +80,45 @@ class Field {
 	}
 	
 	createSubfield() {
+		///
+	}
+	
+	// setCoordinates(numPoints, ...ranges) where each 'range' = [initial, final]
+	//NEET TO CALCULATE STEPSIZE DIFFERENTLY
+	// calculate based on transformation distances, not euclidian distance
+	setCoordinates(dimension, initial, final, numPoints) {
+		let stepSize = (final - initial) / (numPoints - 1);
 		
+		// range, initial, final, numPoints, and stepSize need to be associated with each possible dimension
+		
+		// build initial Euclidean array used for later transformations
+		this.coordinates = Array(numPoints).fill();
+		this.coordinates.forEach((element, index, array) => {
+			array[index] = index * stepSize + initial;
+		});
+		
+		this.transformations[dimension].forEach((transformation, index, array) => {
+			this.coordinates.forEach((point, index, array) => {
+				array[index] = transformation(point);
+			});
+		}, this);
 	}
 }
 
-var gen0 = (x,y) => 2*x;
-var gen1 = (x,y) => x+y;
-// var gen2 = (x,y,z) => x+y;
-var fieldTest = new Field(gen0,gen1);
+var func0 = (x,y) => 2*x;
+var func1 = (x,y) => x+y;
+// var func2 = (x,y,z) => x+y;
+var field = new Field(func0,func1);
 var transform0A = (x,y) => x*y;
 var transform1A = (x,y) => 2*y;
 var transform1B = (x,y) => 2*x;
-// fieldTest.transform(1,transform1A).transform(1,transform1B).transform(0,transform0A);
-console.log(fieldTest.transformations);
-
+// console.log(field.transformations);
+// field.transform(1,transform1A).transform(1,transform1B).transform(0,transform0A);
+var func0_1D_A = (x) => Math.cos(x);
+var func0_1D_B = (x) => 250*x;
+var field1D = new Field(func0_1D_A);
+field1D.transform(0,func0_1D_B);
+field1D.setCoordinates(0,-10,10,18);
 
 /// P5JS ///
 
@@ -110,8 +134,8 @@ function draw() {
 	fill('red');
 	stroke('#666');
 	
-	for (let i = 0; i < field1D.coordinates[0].length; i++) {
-		ellipse(field1D.coordinates[0][i], 0, 15, 15);
+	for (let i = 0; i < field1D.coordinates.length; i++) {
+		ellipse(field1D.coordinates[i], 0, 15, 15);
 	}
 	fill('black');
 	ellipse(0,0,10,10);
