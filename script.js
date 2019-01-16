@@ -74,34 +74,42 @@ class Field {
 	transform(dimension, transformation) {
 		this.validateTransform(transformation);
 		
+		// build MAP instead of 2D array (Map([dim,func],[dim,func],...))
 		this.transformations[dimension].push(transformation);
 		
 		return this;
 	}
 	
-	createSubfield() {
-		///
-	}
-	
 	// setCoordinates(numPoints, ...ranges) where each 'range' = [initial, final]
-	//NEET TO CALCULATE STEPSIZE DIFFERENTLY
-	// calculate based on transformation distances, not euclidian distance
-	setCoordinates(dimension, initial, final, numPoints) {
-		let stepSize = (final - initial) / (numPoints - 1);
+	setCoordinates(numPoints, ...ranges) {
+	// setCoordinates(dimension, initial, final, numPoints) {
 		
-		// range, initial, final, numPoints, and stepSize need to be associated with each possible dimension
+		// ranges.length needs to equal numDimensions
+		// console.log(ranges.length === this.numDimensions);
 		
 		// build initial Euclidean array used for later transformations
-		this.coordinates = Array(numPoints).fill();
-		this.coordinates.forEach((element, index, array) => {
-			array[index] = index * stepSize + initial;
+		this.euclideanCoordinates = Array(this.numDimensions).fill().map(() => Array(numPoints).fill());
+		console.log(this.euclideanCoordinates);
+		// fill Euclidean array with values
+		this.euclideanCoordinates.forEach((coordinate, dimension) => {
+			let [initial, final] = ranges[dimension];
+			let stepSize = (final - initial) / (numPoints - 1);
+			
+			// fill each dimension's coordinate array with point values
+			coordinate.forEach((_, index, array) => {
+				array[index] = index * stepSize + initial;
+			});
+
+			// this.transformations[dimension].forEach((transformation, index, array) => {
+			// 	this.coordinates.forEach((point, index, array) => {
+			// 		array[index] = transformation(point);
+			// 	});
+			// });
 		});
 		
-		this.transformations[dimension].forEach((transformation, index, array) => {
-			this.coordinates.forEach((point, index, array) => {
-				array[index] = transformation(point);
-			});
-		}, this);
+		this.coordinates = this.euclideanCoordinates;
+		
+		return this.coordinates;
 	}
 }
 
@@ -118,8 +126,14 @@ var func0_1D_A = (x) => Math.cos(x);
 var func0_1D_B = (x) => 250*x;
 var field1D = new Field(func0_1D_A);
 field1D.transform(0,func0_1D_B);
-field1D.setCoordinates(0,-10,10,18);
+// field1D.setCoordinates(99, [0, 50*2*Math.PI]);
+// console.log(field1D);
 
+var func0_2D = (x,y) => Math.sqrt(x*x + y*y);
+var func1_2D = (x,y) => Math.atan2(y, x);
+var field2D = new Field(func0_2D,func1_2D);
+field2D.setCoordinates(101,[0,100],[0,2*Math.PI]);
+// console.log(field2D.coordinates);
 /// P5JS ///
 
 function setup() {
@@ -134,8 +148,10 @@ function draw() {
 	fill('red');
 	stroke('#666');
 	
-	for (let i = 0; i < field1D.coordinates.length; i++) {
-		ellipse(field1D.coordinates[i], 0, 15, 15);
+	for (let i = 0; i < field2D.coordinates.length; i++) {
+		for (let j = 0; j < field2D.coordinates[i].length; j++) {
+			ellipse(field2D.coordinates[i][j], 0, 5, 5);
+		}
 	}
 	fill('black');
 	ellipse(0,0,10,10);
