@@ -81,23 +81,54 @@ class Field {
 	}
 	
 	// setCoordinates(numPoints, ...ranges) where each 'range' = [initial, final]
-	setCoordinates(numPoints, ...ranges) {
+	setCoordinates(...ranges) {
 	// setCoordinates(dimension, initial, final, numPoints) {
 		
-		// ranges.length needs to equal numDimensions
-		// console.log(ranges.length === this.numDimensions);
+		// numPoints >= 2
+		// initial != final
+		
+		let haveEqualLengths = ranges.length === this.numDimensions;
+		if (!haveEqualLengths) {
+			throw new Error('Field Coordinate Error: number of range arguments must equal numDimensions');
+		}
+		
+		// eventually change to range.numPoints instead of range[2]
+		let size = ranges.reduce((totalPoints, range) => totalPoints * range[2], 1);
+		
+		function getStepSize(range) {
+			let [initial, final, numPoints] = range;
+			return (final - initial) / (numPoints - 1);
+		}
+		// add step size as property of range
+		let stepSizeArr = ranges.map(range => getStepSize(range));
+		
+		let repeatArr = Array(this.numDimensions).fill();
+		// let repeat = 1;
+		// repeatArr.forEach((element, dimension, array) => {
+		// 	console.log(dimension);
+		// });
 		
 		// build initial Euclidean array used for later transformations
-		this.euclideanCoordinates = Array(this.numDimensions).fill().map(() => Array(numPoints).fill());
-		console.log(this.euclideanCoordinates);
+		this.euclideanCoordinates = Array(size).fill().map(() => Array(this.numDimensions).fill());
 		// fill Euclidean array with values
-		this.euclideanCoordinates.forEach((coordinate, dimension) => {
-			let [initial, final] = ranges[dimension];
-			let stepSize = (final - initial) / (numPoints - 1);
-			
-			// fill each dimension's coordinate array with point values
-			coordinate.forEach((_, index, array) => {
-				array[index] = index * stepSize + initial;
+		this.euclideanCoordinates.forEach((vector, vectorIndex) => {
+			// console.log(vector);
+			vector.forEach((component, dimension, vector) => {
+				
+				// will only need to calculate once and then use values for every vector
+				let repeat = 1;
+				for (let i = dimension + 1; i < this.numDimensions; i++) {
+					console.log(dimension);
+					repeat *= ranges[i][2];
+				}
+				
+				let convertedIndex = Math.floor(vectorIndex / repeat);
+				let initialVal = ranges[dimension][0];
+				let stepSize = stepSizeArr[dimension];
+				
+				let euclideanVal = initialVal + (convertedIndex % ranges[dimension][2]) * stepSize;
+				vector[dimension] = euclideanVal;
+				
 			});
 
 			// this.transformations[dimension].forEach((transformation, index, array) => {
@@ -106,8 +137,11 @@ class Field {
 			// 	});
 			// });
 		});
-		
 		this.coordinates = this.euclideanCoordinates;
+		
+		// let dimension = 0;
+		// let func00 = this.transformations[dimension][0];
+		// console.log(func00);
 		
 		return this.coordinates;
 	}
@@ -126,14 +160,22 @@ var func0_1D_A = (x) => Math.cos(x);
 var func0_1D_B = (x) => 250*x;
 var field1D = new Field(func0_1D_A);
 field1D.transform(0,func0_1D_B);
-// field1D.setCoordinates(99, [0, 50*2*Math.PI]);
-// console.log(field1D);
+// field1D.setCoordinates([0, 50*2*Math.PI, 99]);
+// console.log(field1D.coordinates);
 
 var func0_2D = (x,y) => Math.sqrt(x*x + y*y);
 var func1_2D = (x,y) => Math.atan2(y, x);
 var field2D = new Field(func0_2D,func1_2D);
-field2D.setCoordinates(101,[0,100],[0,2*Math.PI]);
+field2D.setCoordinates([-250,250,3],[200,-200,2]);
 // console.log(field2D.coordinates);
+
+var func0_3D = (x,y,z) => x;
+var func1_3D = (x,y,z) => y;
+var func2_3D = (x,y,z) => z;
+var field3D = new Field(func0_3D,func1_3D,func2_3D);
+// field3D.setCoordinates([-250,250,5],[200,-200,7],[0,100,4]);
+// console.log(field3D.coordinates);
+
 /// P5JS ///
 
 function setup() {
@@ -147,16 +189,14 @@ function draw() {
 	background(230);
 	fill('red');
 	stroke('#666');
+	let r = 5;
 	
-	for (let i = 0; i < field2D.coordinates.length; i++) {
-		for (let j = 0; j < field2D.coordinates[i].length; j++) {
-			ellipse(field2D.coordinates[i][j], 0, 5, 5);
-		}
-	}
+	let coordinates = field2D.coordinates;
+	coordinates.forEach(vector => ellipse(vector[0],vector[1],r,r));
+	
 	fill('black');
+	//origin
 	ellipse(0,0,10,10);
-	ellipse(-250,0,10,10);
-	ellipse(250,0,10,10);
 	// if (t < tmax) {
 		// background(230);
 		
