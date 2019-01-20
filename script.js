@@ -92,6 +92,16 @@ class Field {
 			throw new Error('Field Coordinate Error: number of range arguments must equal numDimensions');
 		}
 		
+		function getVectorComponent(ranges, stepSizeArr, repeatArr, vectorIndex, dimension) {
+			// add Dimension and/or Range object(s) to condense ranges, stepSizeArr, and repeatArr
+			let convertedIndex = Math.floor(vectorIndex / repeatArr[dimension]);
+			let initialVal = ranges[dimension][0];
+			let stepSize = stepSizeArr[dimension];
+
+			let euclideanVal = initialVal + (convertedIndex % ranges[dimension][2]) * stepSize;
+			return euclideanVal;
+		}
+		
 		// eventually change to range.numPoints instead of range[2]
 		let size = ranges.reduce((totalPoints, range) => totalPoints * range[2], 1);
 		
@@ -102,46 +112,19 @@ class Field {
 		// add step size as property of range
 		let stepSizeArr = ranges.map(range => getStepSize(range));
 		
-		let repeatArr = Array(this.numDimensions).fill();
-		// let repeat = 1;
-		// repeatArr.forEach((element, dimension, array) => {
-		// 	console.log(dimension);
-		// });
+		function getRepeatValue(dimension, rangesArr) {
+			// use reduce method?
+			let repeat = 1;
+			for (let i = dimension + 1; i < rangesArr.length; i++) {
+				repeat *= rangesArr[i][2];
+			}
+			return repeat;
+		}
+		// used for each vector calculation, array is same size as vector
+		let repeatArr = ranges.map((_, dimension, array) => getRepeatValue(dimension, array));
 		
-		// build initial Euclidean array used for later transformations
-		this.euclideanCoordinates = Array(size).fill().map(() => Array(this.numDimensions).fill());
-		// fill Euclidean array with values
-		this.euclideanCoordinates.forEach((vector, vectorIndex) => {
-			// console.log(vector);
-			vector.forEach((component, dimension, vector) => {
-				
-				// will only need to calculate once and then use values for every vector
-				let repeat = 1;
-				for (let i = dimension + 1; i < this.numDimensions; i++) {
-					console.log(dimension);
-					repeat *= ranges[i][2];
-				}
-				
-				let convertedIndex = Math.floor(vectorIndex / repeat);
-				let initialVal = ranges[dimension][0];
-				let stepSize = stepSizeArr[dimension];
-				
-				let euclideanVal = initialVal + (convertedIndex % ranges[dimension][2]) * stepSize;
-				vector[dimension] = euclideanVal;
-				
-			});
-
-			// this.transformations[dimension].forEach((transformation, index, array) => {
-			// 	this.coordinates.forEach((point, index, array) => {
-			// 		array[index] = transformation(point);
-			// 	});
-			// });
-		});
-		this.coordinates = this.euclideanCoordinates;
-		
-		// let dimension = 0;
-		// let func00 = this.transformations[dimension][0];
-		// console.log(func00);
+		// build initial Euclidean coordinates, an array of Vectors
+		this.coordinates = this.euclideanCoordinates = [...Array(size)].map((_, vectorIndex) => [...Array(this.numDimensions)].map((_, dimension) => getVectorComponent(ranges, stepSizeArr, repeatArr, vectorIndex, dimension) ));
 		
 		return this.coordinates;
 	}
@@ -173,7 +156,7 @@ var func0_3D = (x,y,z) => x;
 var func1_3D = (x,y,z) => y;
 var func2_3D = (x,y,z) => z;
 var field3D = new Field(func0_3D,func1_3D,func2_3D);
-// field3D.setCoordinates([-250,250,5],[200,-200,7],[0,100,4]);
+field3D.setCoordinates([-250,250,5],[200,-200,7],[0,100,4]);
 // console.log(field3D.coordinates);
 
 /// P5JS ///
@@ -191,7 +174,7 @@ function draw() {
 	stroke('#666');
 	let r = 5;
 	
-	let coordinates = field2D.coordinates;
+	let coordinates = field3D.coordinates;
 	coordinates.forEach(vector => ellipse(vector[0],vector[1],r,r));
 	
 	fill('black');
