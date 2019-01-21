@@ -2,49 +2,6 @@ var tmax = 50;
 var dt = .1;
 var t = 0;
 
-class FieldOLD {
-	constructor(numDimensions, generator, range, numPoints) {
-		this.n = numDimensions;
-		// if only one given, array with length = 2
-		// if more than one, array of arrays, outer array with length = n, inner arrays with length = 2
-		this.range = range;
-		this.initial = this.range[0];
-		this.final = this.range[1];
-		// if only a number given, set for all n.
-		// otherwise, need array with length = n
-		// steps = number of points - 1
-		this.numPoints = numPoints;
-		this.stepSize = (this.final - this.initial) / (this.numPoints - 1);
-		// function to generate field from Euclidean space
-		// if none is given, use Euclidean space
-		this.generator = generator;
-
-		// range, initial, final, numPoints, and stepSize need to be associated with each possible dimension
-		this.coordinates = Array(this.n).fill().map(() => Array(this.numPoints).fill(null));
-		
-		// set initial coordinates
-		this.coordinates.forEach(dimension => {
-			dimension.forEach((element, index, array) => {
-				array[index] = index * this.stepSize + this.initial;
-				if (this.generator) {
-					array[index] = this.generator(array[index]);
-				}
-			}, this);
-		}, this);
-	}
-	
-	/// METHODS ///
-	
-	// method needs to be part of Field (not Dimension) because each dimension's generating function could use variables from any dimension.
-	// how should each possible variable be denoted/referred to???
-
-	map() {};
-	transform(generator) {};
-	
-}
-
-var field1D = new FieldOLD(1, x => 250*Math.sin(x), [-250, 250], 9);
-
 class Field {
 	constructor(...transformations) {
 		this.validate(transformations);
@@ -80,51 +37,69 @@ class Field {
 		return this;
 	}
 	
-	// setCoordinates(numPoints, ...ranges) where each 'range' = [initial, final]
-	setCoordinates(...ranges) {
-	// setCoordinates(dimension, initial, final, numPoints) {
-		
-		// numPoints >= 2
-		// initial != final
-		
+	validateRanges(ranges) {
 		let haveEqualLengths = ranges.length === this.numDimensions;
 		if (!haveEqualLengths) {
-			throw new Error('Field Coordinate Error: number of range arguments must equal numDimensions');
+			throw new Error('Field Range Error: number of range arguments must equal numDimensions');
 		}
+		let haveUniqueInitialFinal = ranges.every(range => range[0] !== range[1]);
+		if (!haveUniqueInitialFinal) {
+			throw new Error('Field Range Error: each range must have unique initial and final values');
+		}
+		let hasIntegerNumPoints = ranges.every(range => range[2] % 1 === 0);
+		if (!hasIntegerNumPoints) {
+			throw new Error('Field Range Error: each range must have an integer value for numPoints');
+		}
+		let hasCorrectNumPoints = ranges.every(range => range[2] > 1);
+		if (!hasCorrectNumPoints) {
+			throw new Error('Field Range Error: each range must have at least 2 numPoints');
+		}
+	}
+	
+	// setCoordinates(...ranges) where each 'range' = [initial, final, numPoints]
+	setCoordinates(...ranges) {
+		this.validateRanges(ranges);
 		
-		function getVectorComponent(ranges, stepSizeArr, repeatArr, vectorIndex, dimension) {
-			// add Dimension and/or Range object(s) to condense ranges, stepSizeArr, and repeatArr
-			let convertedIndex = Math.floor(vectorIndex / repeatArr[dimension]);
-			let initialVal = ranges[dimension][0];
-			let stepSize = stepSizeArr[dimension];
-
-			let euclideanVal = initialVal + (convertedIndex % ranges[dimension][2]) * stepSize;
+		function getVectorComponent(range, stepSize, repeater, vectorIndex) {
+			// add Dimension and/or Range object(s) to condense initialVal, repeater, and stepSize
+			
+			// range.initial
+			let initialVal = range[0];
+			// range.numPoints
+			let numPoints = range[2];
+			let convertedIndex = Math.floor(vectorIndex / repeater);
+			
+			let euclideanVal = initialVal + (convertedIndex % numPoints) * stepSize;
 			return euclideanVal;
 		}
 		
 		// eventually change to range.numPoints instead of range[2]
-		let size = ranges.reduce((totalPoints, range) => totalPoints * range[2], 1);
+		let size = ranges.reduce((totalPoints, range) => totalPoints*range[2], 1);
 		
-		function getStepSize(range) {
+		// add step size as property of range
+		let stepSizeArr = ranges.map(range => {
 			let [initial, final, numPoints] = range;
 			return (final - initial) / (numPoints - 1);
-		}
-		// add step size as property of range
-		let stepSizeArr = ranges.map(range => getStepSize(range));
+		});
 		
-		function getRepeatValue(dimension, rangesArr) {
-			// use reduce method?
-			let repeat = 1;
-			for (let i = dimension + 1; i < rangesArr.length; i++) {
-				repeat *= rangesArr[i][2];
-			}
-			return repeat;
-		}
 		// used for each vector calculation, array is same size as vector
-		let repeatArr = ranges.map((_, dimension, array) => getRepeatValue(dimension, array));
+		let repeatArr = ranges.map((_, dimension, ranges) => {
+			return ranges.reduce((repeatVal, currentVal, currentIndex) => {
+				if (currentIndex > dimension) {
+					repeatVal *= currentVal[2];
+				}
+				return repeatVal;
+			}, 1);
+		});
 		
-		// build initial Euclidean coordinates, an array of Vectors
-		this.coordinates = this.euclideanCoordinates = [...Array(size)].map((_, vectorIndex) => [...Array(this.numDimensions)].map((_, dimension) => getVectorComponent(ranges, stepSizeArr, repeatArr, vectorIndex, dimension) ));
+		// build initial Euclidean coordinates
+		this.coordinates = this.euclideanCoordinates = [...Array(size)].map((_, vectorIndex) => {
+			// fill coordinates array with vectors
+			return [...Array(this.numDimensions)].map((_, dimension) => {
+				// fill vector arrays with component values
+				return getVectorComponent(ranges[dimension], stepSizeArr[dimension], repeatArr[dimension], vectorIndex);
+			});
+		});
 		
 		return this.coordinates;
 	}
@@ -143,7 +118,7 @@ var func0_1D_A = (x) => Math.cos(x);
 var func0_1D_B = (x) => 250*x;
 var field1D = new Field(func0_1D_A);
 field1D.transform(0,func0_1D_B);
-// field1D.setCoordinates([0, 50*2*Math.PI, 99]);
+field1D.setCoordinates([0, 50*2*Math.PI, 99]);
 // console.log(field1D.coordinates);
 
 var func0_2D = (x,y) => Math.sqrt(x*x + y*y);
