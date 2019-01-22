@@ -28,11 +28,25 @@ class Field {
 		}
 	}
 	
-	transform(dimension, transformation) {
-		this.validateTransform(transformation);
+	transform(...dimensions) {
+		// this.validateTransform(transformation);
 		
 		// build MAP instead of 2D array (Map([dim,func],[dim,func],...))
-		this.transformations[dimension].push(transformation);
+		
+		// copy this.coordinates into temporary array
+		let newCoordinates = Array(this.coordinates.length).fill().map((element,index) => [...this.coordinates[index]]);
+		
+		dimensions.forEach(dimension => {
+			this.transformations[dimension].forEach(transform => {
+				// update vector component	of newCoordinates using values from this.coordinates
+				this.coordinates.forEach((vector, index) => {
+					newCoordinates[index][dimension] = transform(...vector);
+				});
+			});
+		});
+		
+		// check memory issues, this copies by reference which may cause problems
+		this.coordinates = newCoordinates;
 		
 		return this;
 	}
@@ -105,56 +119,58 @@ class Field {
 	}
 }
 
-var func0 = (x,y) => 2*x;
-var func1 = (x,y) => x+y;
-// var func2 = (x,y,z) => x+y;
-var field = new Field(func0,func1);
-var transform0A = (x,y) => x*y;
-var transform1A = (x,y) => 2*y;
-var transform1B = (x,y) => 2*x;
-// console.log(field.transformations);
-// field.transform(1,transform1A).transform(1,transform1B).transform(0,transform0A);
-var func0_1D_A = (x) => Math.cos(x);
-var func0_1D_B = (x) => 250*x;
+var func0_1D_A = (x) => 75*Math.sin(2*x);
 var field1D = new Field(func0_1D_A);
-field1D.transform(0,func0_1D_B);
-field1D.setCoordinates([0, 50*2*Math.PI, 99]);
-// console.log(field1D.coordinates);
+field1D.setCoordinates([-2*Math.PI,2*Math.PI,300]);
+field1D.transform(0);
 
-var func0_2D = (x,y) => Math.sqrt(x*x + y*y);
-var func1_2D = (x,y) => Math.atan2(y, x);
+var func0_2D = (x,y) => x*Math.cos(y);
+var func1_2D = (x,y) => x*Math.sin(y);
 var field2D = new Field(func0_2D,func1_2D);
-field2D.setCoordinates([-250,250,3],[200,-200,2]);
-// console.log(field2D.coordinates);
+field2D.setCoordinates([0,250,11],[0,2*Math.PI,80]);
+field2D.transform(0,1);
+// field2D.transform(1);
 
 var func0_3D = (x,y,z) => x;
 var func1_3D = (x,y,z) => y;
 var func2_3D = (x,y,z) => z;
 var field3D = new Field(func0_3D,func1_3D,func2_3D);
-field3D.setCoordinates([-250,250,5],[200,-200,7],[0,100,4]);
-// console.log(field3D.coordinates);
+field3D.setCoordinates([-300,300,7],[200,-200,5],[100,0,7]);
 
 /// P5JS ///
-
 function setup() {
 	frameRate(60);  //default value is 60
 	canvas = createCanvas(700, 500);
 	//set origin to center of canvas
 	canvas.translate(width/2, height/2);
+	// NOTE: +y points downwards
 }
 
 function draw() {
 	background(230);
+	stroke('#222');
+	
+	field3D.coordinates.forEach(vector => {
+		fill(map(vector[2],0,100,40,40), map(vector[2],0,100,0,200), map(vector[2],0,100,50,150));
+		let radius = map(vector[2],0,100,14,140);
+		ellipse(vector[0],vector[1],radius,radius);
+	});
+	
 	fill('red');
-	stroke('#666');
-	let r = 5;
+	let r = 15;
+	field2D.coordinates.forEach(vector => {
+		ellipse(vector[0],vector[1],r,r);
+	});
 	
-	let coordinates = field3D.coordinates;
-	coordinates.forEach(vector => ellipse(vector[0],vector[1],r,r));
+	fill('yellow');
+	field1D.coordinates.forEach((vector,index,array) => {
+		ellipse(map(index,0,array.length-1,-300,300),vector[0],10,10);
+	});
 	
+	// origin
 	fill('black');
-	//origin
-	ellipse(0,0,10,10);
+	ellipse(0,0,r/2,r/2);
+	
 	// if (t < tmax) {
 		// background(230);
 		
