@@ -5,53 +5,102 @@ var t = 0;
 // updates existing array with values from another array
 var updateArrayFrom = (arrayToUpdate, arrayFrom) => arrayToUpdate.map((element,index) => [...arrayFrom[index]]);
 
-// write function to copy multidimensional array of any dimension with arguments (array, dimension) where dimension = [2, Infinity]
-// creates new array from existing array
-// let copyArray2D = (array) => Array(array.length).fill().map((element,index) => [...array[index]]);
-var copyArray2D = (array) => updateArrayFrom(Array(array.length).fill(), array);
+// creates new array from existing 2D array (array of arrays)
+var copyArray2D = (array) => updateArrayFrom([...Array(array.length)], array);
 
 class Field {
+	
+	/// CONSTRUCTOR ///
+	
 	constructor(numDimensions) {
-		// this.validate(transformations);
+		this.validate(numDimensions);
 		
 		this.numDimensions = numDimensions;
-		
 		this.transformations = [];
-		
-		// this.dimensions = Array(this.numDimensions).fill().map((_, index) => [transformations[index]]);
-		
-		// create Map object with an entry for each dimension, where key is the dimension starting at 0, and value is an array to be filled with functions representing dimensions transformations
-		this.dimensions = new Map(Array(numDimensions).fill().map((_, index) => [index, []]));
+		this.dimensions = new Map([...Array(numDimensions)].map((_, index) => [index, []]));
 	}
 	
-	validate(transformations) {
-		let haveEqualArgumentLengths = transformations.every((element, _, array) => element.length === array[0].length);
-		if (!haveEqualArgumentLengths) {
-			throw new Error('Field Constructor Error: transformation functions must have equal number arguments');
-		}
-		let haveEqualLengths = transformations.every((element, _, array) => element.length === array.length);
-		if (!haveEqualLengths) {
-			throw new Error('Field Constructor Error: number of transformation functions must equal number of arguments in each transformation function');
-		}
-	}
+	/// END CONSTRUCTOR ///
 	
-	validateTransform(transformation) {
-		let haveEqualLengths = transformation.length === this.numDimensions;
-		if (!haveEqualLengths) {
-			throw new Error('Field Transform Error: number of transformation arguments must equal numDimensions');
+	/// VALIDATION METHODS ///
+	
+	validate(numDimensions) {
+		// check if numDimensions is an integer within range: [1, Infinity]
+		let hasValidNumDimensions = numDimensions >= 1 && numDimensions % 1 === 0;
+		if (!hasValidNumDimensions) {
+			throw new Error('Field Constructor Error: numDimensions must be an integer greater than or equal to 1');
 		}
 	}
 	
 	validateTransformation(transformation) {
-		// check if dimensions are within range: [0, numDimensions - 1]
-		// throw warning if duplicate dimensions are included, since the earlier values will be overridden
-		// check that second argument is a function with the number of arguments equal to numDimensions
-		// transformation.forEach(element => ........);
+		// check if second argument is a function with the number of arguments equal to numDimensions
+		transformation.forEach(transform => {
+			let transformDimension = transform[0];
+			let transformFunction = transform[1];
+			
+			// check if dimensions are integers within range: [0, numDimensions - 1]
+			let dimensionMax = this.numDimensions - 1;
+			let hasValidDimension =  transformDimension >= 0 && transformDimension <= dimensionMax && transformDimension % 1 === 0;
+			if (!hasValidDimension) {
+				throw new Error('Field Transformation Error: dimension must be an integer between 0 and ' + dimensionMax);
+			}
+			
+			// check if function is correct type and has the same number of arguments as there are dimensions (this.numDimensions)
+			let hasValidFunction = typeof transformFunction === 'function' && transformFunction.length === this.numDimensions;
+			if (!hasValidFunction) {
+				throw new Error('Field Transformation Error: transformation functions must be of type "function" where the number of arguments is equal to this.numDimensions')
+			}
+		});
+		
+		// check if duplicate dimensions are included
+		let dimensionArray = transformation.map(transform => transform[0]);
+		let dimensionSet = new Set(dimensionArray);
+		let hasDuplicateDimensions = dimensionArray.length !== dimensionSet.size;
+		if (hasDuplicateDimensions) {
+			throw new Error('Field Transformation Error: transformation dimensions must be unique');	
+		}
 	}
 	
-	// transformations is passed in as an array of key-value pairs, to be converted into a Map object
+	validateTransformationIndex(targetTransformationIndex) {
+		// check if targetTransformationIndex is an integer within range: [0, transformations.length - 1]
+		let indexMax = this.transformations.length - 1;
+		let hasValidIndex =  targetTransformationIndex >= 0 && targetTransformationIndex <= indexMax && targetTransformationIndex % 1 === 0;
+			if (!hasValidIndex) {
+				throw new Error('Field Transformation Error: targetTransformationIndex must be an integer between 0 and ' + indexMax);
+			}
+	};
+	
+	validateRanges(ranges) {
+		// check if length is equal to number of dimensions
+		let haveEqualLengths = ranges.length === this.numDimensions;
+		if (!haveEqualLengths) {
+			throw new Error('Field Range Error: number of range arguments must equal numDimensions');
+		}
+		// check if initial and final range values are unique
+		let haveUniqueInitialFinal = ranges.every(range => range[0] !== range[1]);
+		if (!haveUniqueInitialFinal) {
+			throw new Error('Field Range Error: each range must have unique initial and final values');
+		}
+		// check if numPoints is an integer value
+		let hasIntegerNumPoints = ranges.every(range => range[2] % 1 === 0);
+		if (!hasIntegerNumPoints) {
+			throw new Error('Field Range Error: each range must have an integer value for numPoints');
+		}
+		// check if numPoints value is at least 2
+		let hasCorrectNumPoints = ranges.every(range => range[2] >= 2);
+		if (!hasCorrectNumPoints) {
+			throw new Error('Field Range Error: each range must have at least 2 numPoints');
+		}
+	}
+	
+	/// END VALIDATION METHODS ///
+	
+	/// METHODS ///
+	
+	// Adds a transformation to the end of this.transformations
+	// addTransformation(...transformation) where 'transformation' is an array of key-value pairs to be converted into a Map object
 	addTransformation(...transformation) {
-		// this.validateTransformation(transformation);
+		this.validateTransformation(transformation);
 		
 		this.transformations.push(new Map(transformation));
 		
@@ -62,68 +111,53 @@ class Field {
 		return this.transformations[transformationIndex].get(dimension);
 	}
 	
-	getTransformedVector(targetTransformationIndex, originalVector) {
-		let newVector = Array(originalVector.length).fill();
+	getComponentValue(transformationIndex, component, vector) {
+		// get transformation functions in reverse order so recursive calls use the latest transformation as the innermost function: t0(t1(...(tm(0,1,...,n))))
+		let reversedTransformationIndex = Math.abs((this.transformations.length - 1) - transformationIndex);
 
-		let getComponentValue = (transformationIndex, component) => {
-			// get transformation functions in reverse order so recursive calls use the latest transformation as the innermost function:
-			// t0(t1(...(tm(0,1,...,n))))
-			let reversedTransformationIndex = Math.abs((this.transformations.length - 1) - transformationIndex);
-			
-			let transformationFunc = this.getTransformationFunc(reversedTransformationIndex, component);
-			let componentValues;
+		let transformationFunc = this.getTransformationFunc(reversedTransformationIndex, component);
+		// if transformation function is undefined, return vector component value as is
+		if (!transformationFunc) {
+			return vector[component];
+		}
+	
+		let componentValues;
+		if (transformationIndex > 0) {
+			// use values from previous transformations as input for current transformation function
+			componentValues = [...Array(this.numDimensions)].map((_, component) => this.getComponentValue(transformationIndex - 1, component, vector));
+		} else {
+			// use vector values as input for transformation function
+			componentValues = vector;
+		}
 
-			if (transformationIndex > 0) {
-				// use values from previous transformations as input for current transformation function
-				componentValues = Array(this.numDimensions).fill().map((_, dimension) => getComponentValue(transformationIndex - 1, dimension));
-			} else {
-				// use orginalVector values as input for transformation function
-				componentValues = originalVector;
-			}
-
-			return transformationFunc(...componentValues);
-		};
-
+		return transformationFunc(...componentValues);
+	}
+	
+	getTransformedVector(targetTransformationIndex, vector) {
+		let newVector = [...Array(vector.length)];
+		
 		// loop through vector components to set newVector using values from originalVector
-		originalVector.forEach((componentValue, componentIndex, vector) => {
-			newVector[componentIndex] = getComponentValue(targetTransformationIndex, componentIndex);
+		vector.forEach((_, component) => {
+			newVector[component] = this.getComponentValue(targetTransformationIndex, component, vector);
 		});
 
 		return newVector;
 	}
 	
 	// Updates this.coordinates starting at transformation associated with given index of this.transformations
-	// DEFAULT targetTransformationIndex = final transformation index of this.transformations
+	// transformCoordinates(targetTransformationIndex) where DEFAULT = final transformation index of this.transformations
 	transformCoordinates(targetTransformationIndex = this.transformations.length - 1) {
+		this.validateTransformationIndex(targetTransformationIndex);
+		
 		this.coordinates.forEach((vector, index, array)  => {
 			array[index] = this.getTransformedVector(targetTransformationIndex, vector);
 		});
-		// console.log(this.coordinates[5]);
-		// console.log(this.getTransformedVector(targetTransformationIndex, this.coordinates[5]))
 		
 		return this;
 	}
 	
-	validateRanges(ranges) {
-		let haveEqualLengths = ranges.length === this.numDimensions;
-		if (!haveEqualLengths) {
-			throw new Error('Field Range Error: number of range arguments must equal numDimensions');
-		}
-		let haveUniqueInitialFinal = ranges.every(range => range[0] !== range[1]);
-		if (!haveUniqueInitialFinal) {
-			throw new Error('Field Range Error: each range must have unique initial and final values');
-		}
-		let hasIntegerNumPoints = ranges.every(range => range[2] % 1 === 0);
-		if (!hasIntegerNumPoints) {
-			throw new Error('Field Range Error: each range must have an integer value for numPoints');
-		}
-		let hasCorrectNumPoints = ranges.every(range => range[2] > 1);
-		if (!hasCorrectNumPoints) {
-			throw new Error('Field Range Error: each range must have at least 2 numPoints');
-		}
-	}
-	
-	// setCoordinates(...ranges) where each 'range' = [initial, final, numPoints]
+	// Updates and returns this.coordinates, an array of vectors
+	// setCoordinates(...ranges) where 'ranges' is an array in which each 'range' = [initial, final, numPoints]
 	setCoordinates(...ranges) {
 		this.validateRanges(ranges);
 		
@@ -136,8 +170,8 @@ class Field {
 			let numPoints = range[2];
 			let convertedIndex = Math.floor(vectorIndex / repeater);
 			
-			let euclideanVal = initialVal + (convertedIndex % numPoints) * stepSize;
-			return euclideanVal;
+			let cartesianVal = initialVal + (convertedIndex % numPoints) * stepSize;
+			return cartesianVal;
 		}
 		
 		// eventually change to range.numPoints instead of range[2]
@@ -160,68 +194,47 @@ class Field {
 			}, 1);
 		});
 		
-		// build initial Cartesian coordinates
-		this.cartesianCoordinates  = [...Array(size)].map((_, vectorIndex) => {
-			// fill coordinates array with vectors
+		// create empty Cartesian coordinates array
+		this.cartesianCoordinates = [...Array(size)].map((_, vectorIndex) => {
+			// fill Cartesian coordinates array with empty vector arrays
 			return [...Array(this.numDimensions)].map((_, dimension) => {
-				// fill vector arrays with component values
+				// fill vectors with calculated component values
 				return getVectorComponent(ranges[dimension], stepSizeArr[dimension], repeatArr[dimension], vectorIndex);
 			});
 		});
 		this.coordinates = copyArray2D(this.cartesianCoordinates);
 		
-		// apply transformations to Cartesian coordinates
-		this.transformCoordinates();
+		// apply transformations to Cartesian coordinates if any have been added
+		if (this.transformations.length > 0) {
+			this.transformCoordinates();
+		}
 		
 		return this.coordinates;
 	}
+	
+	/// END METHODS ///
 }
 
-// var func0_1D_A = (x) => 75*Math.sin(x);
-// var field1D = new Field(1);
-// field1D.addTransformation(0,func0_1D_A);
-// field1D.setCoordinates([-2*Math.PI,2*Math.PI,300]);
-// field1D.transform(0);
-// var func0_1D_B = (x) => -75*Math.sin(x);
-// var field1D_2 = new Field(func0_1D_B);
-// field1D_2.setCoordinates([-2*Math.PI,2*Math.PI,300]);
-// field1D_2.transform(0);
+var func0_1D_A = (x) => 75*Math.sin(x);
+var field1D = new Field(1);
+field1D.addTransformation([0,func0_1D_A]);
+field1D.setCoordinates([-2*Math.PI,2*Math.PI,300]);
 
-let f0 = (x,y) => x*Math.cos(y);
-let f1 = (x,y) => x*Math.sin(y);
-let g0 = (x,y) => 4*x + 20*y;
-let g1 = (x,y) => 1.3*y;
-
-let f0_of_g0 = (x,y) => (4*x + 20*y)*Math.cos(1.3*y);
-let f1_of_g1 = (x,y) => (4*x + 20*y)*Math.sin(1.3*y);
-
-let h0 = (x,y) => 4*x;
-let h1 = (x,y) => y + Math.PI/4;
+let f0 = (x,y) => x*Math.cos(y) - 100;
+let f1 = (x,y) => x*Math.sin(y) + 100;
+let g0 = (x,y) => 4.3*x + 20*y;
+let g1 = (x,y) => 2.1*y;
+let h0 = (x,y) => x*y;
 let field2D = new Field(2);
-// update getTransformedVector method so g1 trivial mappings like g1 aren't necessary:
-// if transformationFunc isn't defined, return componentValue as is
-// NOTE: transformed coordinates returns f(g(h(...(x,y,...))))
-// field2D.addTransformation([0,f0],[1,f1]);
-// field2D.addTransformation([0,g0],[1,g1]);
-field2D.addTransformation([0,f0_of_g0],[1,f1_of_g1]);
-// field2D.addTransformation([0,h0],[1,h1]);
-// create separate Coordinates object that includes ranges - associated with Field object somehow...
-var coordinates2D = field2D.setCoordinates([0,50,11],[0,Math.PI,11]);
+field2D.addTransformation([0,f0],[1,f1]).addTransformation([0,g0],[1,g1]).addTransformation([0,h0]);
+var coordinates2D = field2D.setCoordinates([0,25,15],[0,Math.PI,50]);
 
-// var field2D_test = new Field(2);
-// f0_of_g = (x,y) => (4*x)*Math.cos(2*y);
-// f1_of_g = (x,y) => (4*x)*Math.sin(2*y);
-// field2D_test.addTransformation([0,f0_of_g],[1,f1_of_g]);
-// var coordinates2D_test = field2D_test.setCoordinates([0,250,11],[0,2*Math.PI,50]);
-
-// var func0_3D = (x,y,z) => x;
-// var func1_3D = (x,y,z) => y;
-// var func2_3D = (x,y,z) => z;
-// var field3D = new Field(func0_3D,func1_3D,func2_3D);
-// var field3D = new Field(3);
-// field3D.addTransformation(0,func0_3D).addTransformation(1,func1_3D).addTransformation(2,func2_3D);
-// field3D.setCoordinates([-300,300,7],[200,-200,5],[100,0,7]);
-// console.log(field3D.coordinates);
+var func0_3D = (x,y,z) => x + z - 42;
+var func1_3D = (x,y,z) => y + z - 42;
+var func2_3D = (x,y,z) => 1.2*z;
+var field3D = new Field(3);
+field3D.addTransformation([0,func0_3D],[1,func1_3D],[2,func2_3D]);
+field3D.setCoordinates([-300,300,6],[200,-200,5],[100,0,6]);
 
 /// P5JS ///
 function setup() {
@@ -236,33 +249,26 @@ function draw() {
 	background(230);
 	stroke('#222');
 	
-// 	field3D.coordinates.forEach(vector => {
-// 		fill(map(vector[2],0,100,40,40), map(vector[2],0,100,0,200), map(vector[2],0,100,50,150));
-// 		let radius = map(vector[2],0,100,14,140);
-// 		ellipse(vector[0],vector[1],radius,radius);
-// 	});
+	field3D.coordinates.forEach(vector => {
+		fill(map(vector[2],0,100,40,40), map(vector[2],0,100,0,200), map(vector[2],0,100,50,150));
+		let radius = map(vector[2],0,100,14,140);
+		ellipse(vector[0],vector[1],radius,radius);
+	});
 	
 	fill('red');
 	let r = 15;
 	coordinates2D.forEach(vector => {
 		ellipse(vector[0],vector[1],r,r);
 	});
-	// fill('aqua');
-	// coordinates2D_test.forEach(vector => {
-	// 	ellipse(vector[0],vector[1],r,r);
-	// });
 	
-// 	fill('yellow');
-// 	field1D.coordinates.forEach((vector,index,array) => {
-// 		ellipse(map(index,0,array.length-1,-300,300),vector[0],10,10);
-// 	});
-// 	field1D_2.coordinates.forEach((vector,index,array) => {
-// 		ellipse(map(index,0,array.length-1,-300,300),vector[0],10,10);
-// 	});
+	fill('yellow');
+	field1D.coordinates.forEach((vector,index,array) => {
+		ellipse(map(index,0,array.length-1,-300,300),vector[0],10,10);
+	});
 	
 	// origin
-	fill('black');
-	ellipse(0,0,r/2,r/2);
+	// fill('black');
+	// ellipse(0,0,r/2,r/2);
 	
 	// if (t < tmax) {
 		// background(230);
