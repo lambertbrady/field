@@ -17,7 +17,6 @@ class Field {
 		
 		this.numDimensions = numDimensions;
 		this.transformations = [];
-		this.dimensions = new Map([...Array(numDimensions)].map((_, index) => [index, []]));
 	}
 	
 	/// END CONSTRUCTOR ///
@@ -88,50 +87,25 @@ class Field {
 		return this.transformations[transformationIndex].get(dimension);
 	}
 	
-	getCoordinates(...ranges) {
-		return new Coordinates(this, ...ranges);
+	getCoordinateSpace(...ranges) {
+		return new CoordinateSpace(this, ...ranges);
 	}
 	
 	/// END METHODS ///
 }
 
-class Coordinates {
+class CoordinateSpace {
 	
 	constructor(field, ...ranges) {
 		this.validateRanges(field, ranges);
 		
 		this.field = field;
-		this.ranges = ranges;
-		
-		// eventually change to range.numPoints instead of range[2]
-		// add size as property of coordinates
-		this.size = ranges.reduce((totalPoints, range) => totalPoints*range[2], 1);
-		
-		// add step size as property of range
-		let stepSizeArr = ranges.map(range => {
-			let [initial, final, numPoints] = range;
-			return (final - initial) / (numPoints - 1);
+		this.ranges = ranges.map(range => {
+			return {initial: range[0], final: range[1], numPoints: range[2]};
 		});
-
-		// used for each vector calculation, array is same size as vector
-		let repeatArr = ranges.map((_, dimension, ranges) => {
-			return ranges.reduce((repeatVal, currentVal, currentIndex) => {
-				if (currentIndex > dimension) {
-					repeatVal *= currentVal[2];
-				}
-				return repeatVal;
-			}, 1);
-		});
-
-		// create empty Cartesian coordinates array
-		this.cartesianCoordinates = [...Array(this.size)].map((_, vectorIndex) => {
-			// fill Cartesian coordinates array with empty vector arrays
-			return [...Array(this.field.numDimensions)].map((_, dimension) => {
-				// fill vectors with calculated component values
-				return this.getVectorComponent(ranges[dimension], stepSizeArr[dimension], repeatArr[dimension], vectorIndex);
-			});
-		});
+		this.size = this.ranges.reduce((totalPoints, range) => totalPoints*range.numPoints, 1);
 		
+		this.setCartesianCoordinates(this.ranges);
 		this.coordinates = copyArray2D(this.cartesianCoordinates);
 
 		// apply transformations to Cartesian coordinates if any have been added
@@ -140,8 +114,40 @@ class Coordinates {
 		}
 	}
 	
+	setCartesianCoordinates(ranges) {
+		
+		// add step size as property of range
+		let stepSizeArr = ranges.map(range => {
+			return (range.final - range.initial) / (range.numPoints - 1);
+		});
+
+		// used for each vector calculation, array is same size as vector
+		let repeatArr = ranges.map((_, dimension, ranges) => {
+			return ranges.reduce((repeatVal, currentRange, currentRangeIndex) => {
+				if (currentRangeIndex > dimension) {
+					repeatVal *= currentRange.numPoints;
+				}
+				return repeatVal;
+			}, 1);
+		});
+
+		function getCartesianVectorComponent(range, stepSize, repeater, vectorIndex) {
+			let convertedIndex = Math.floor(vectorIndex / repeater);
+			return range.initial + (convertedIndex % range.numPoints) * stepSize;
+		}
+		
+		// create empty Cartesian coordinates array
+		this.cartesianCoordinates = [...Array(this.size)].map((_, vectorIndex) => {
+			// fill Cartesian coordinates array with empty vector arrays
+			return [...Array(this.field.numDimensions)].map((_, dimension) => {
+				// fill vectors with calculated component values
+				return getCartesianVectorComponent(ranges[dimension], stepSizeArr[dimension], repeatArr[dimension], vectorIndex);
+			});
+		});
+	}
+	
 	// Loops through this.coordinates array
-	// thisArg DEFAULT = this (Coordinates object upond which the method was called)
+	// thisArg DEFAULT = this (Coordinates object upon which the method was called)
 	forEach(callback, thisArg = this) {
 		for (let i = 0; i < this.coordinates.length; i++) {
 			callback.bind(thisArg)(this.coordinates[i], i, this.coordinates);
@@ -176,49 +182,40 @@ class Coordinates {
 		ranges.forEach(range => this.validateRange(range));
 	}
 	
-	getComponentValue(transformationIndex, component, vector) {
+	getTransformedVectorComponent(transformationIndex, component, vector) {
+		let transformedComponent;
+		
 		// get transformation functions in reverse order so recursive calls use the latest transformation as the innermost function: t0(t1(...(tm(0,1,...,n))))
 		let reversedTransformationIndex = Math.abs((this.field.transformations.length - 1) - transformationIndex);
-
 		let transformationFunc = this.field.getTransformationFunc(reversedTransformationIndex, component);
-		// if transformation function is undefined, return vector component value as is
+		
 		if (!transformationFunc) {
-			return vector[component];
-		}
-	
-		let componentValues;
-		if (transformationIndex > 0) {
-			// use values from previous transformations as input for current transformation function
-			componentValues = [...Array(this.field.numDimensions)].map((_, component) => this.getComponentValue(transformationIndex - 1, component, vector));
+		// if transformation function is undefined, return vector component value as is
+			transformedComponent = vector[component];
 		} else {
+			let componentValues;
+			
+			if (transformationIndex > 0) {
+			// use values from previous transformations as input for current transformation function
+				componentValues = [...Array(this.field.numDimensions)].map((_, component) => this.getTransformedVectorComponent(transformationIndex - 1, component, vector));
+			} else {
 			// use vector values as input for transformation function
-			componentValues = vector;
+				componentValues = vector;
+			}
+			transformedComponent = transformationFunc(...componentValues);
 		}
-
-		return transformationFunc(...componentValues);
+		return transformedComponent;
 	}
 	
 	getTransformedVector(targetTransformationIndex, vector) {
-		let newVector = [...Array(vector.length)];
+		let transformedVector = [...Array(vector.length)];
 		
 		// loop through vector components to set newVector using values from originalVector
 		vector.forEach((_, component) => {
-			newVector[component] = this.getComponentValue(targetTransformationIndex, component, vector);
+			transformedVector[component] = this.getTransformedVectorComponent(targetTransformationIndex, component, vector);
 		});
 
-		return newVector;
-	}
-
-	getVectorComponent(range, stepSize, repeater, vectorIndex) {
-		// add Dimension and/or Range object(s) to condense initialVal, repeater, and stepSize
-		// range.initial
-		let initialVal = range[0];
-		// range.numPoints
-		let numPoints = range[2];
-		let convertedIndex = Math.floor(vectorIndex / repeater);
-
-		let cartesianVal = initialVal + (convertedIndex % numPoints) * stepSize;
-		return cartesianVal;
+		return transformedVector;
 	}
 
 	// Updates this.coordinates starting at transformation associated with given index of this.transformations
@@ -239,21 +236,28 @@ var func0_1D_A = (x) => 75*Math.sin(x);
 var field1D = new Field(1);
 field1D.addTransformation([0,func0_1D_A]);
 
+let scaleX = (x,y) => 100*x;
+let yofx = (x) => 50*Math.sin(x);
+let stack = (x,y) => -1*yofx(x) + y;
+let field2D = new Field(2);
+field2D.addTransformation([0,scaleX],[1,stack]);
+var coordinates2D = new CoordinateSpace(field2D,[-Math.PI,Math.PI,100],[-150,150,3]);
+
 let f0 = (x,y) => x*Math.cos(y) - 100;
 let f1 = (x,y) => x*Math.sin(y) + 100;
 let g0 = (x,y) => 4.3*x + 20*y;
 let g1 = (x,y) => 2.1*y;
 let h0 = (x,y) => x*y;
-let field2D = new Field(2);
-field2D.addTransformation([0,f0],[1,f1]).addTransformation([0,g0],[1,g1]).addTransformation([0,h0]);
-var coordinates2D = new Coordinates(field2D,[0,25,15],[0,Math.PI,50]);
+let polar = new Field(2);
+polar.addTransformation([0,f0],[1,f1]).addTransformation([0,g0],[1,g1]).addTransformation([0,h0]);
+var polarCoordinates = new CoordinateSpace(polar,[0,25,15],[0,Math.PI,50]);
 
 var func0_3D = (x,y,z) => x + z - 42;
 var func1_3D = (x,y,z) => y + z - 42;
 var func2_3D = (x,y,z) => 1.2*z;
 var field3D = new Field(3);
 field3D.addTransformation([0,func0_3D],[1,func1_3D],[2,func2_3D]);
-var coordinates3D = field3D.getCoordinates([-300,300,6],[200,-200,5],[100,0,6]);
+var coordinates3D = field3D.getCoordinateSpace([-300,300,6],[200,-200,5],[100,0,6]);
 
 /// P5JS ///
 function setup() {
@@ -268,22 +272,26 @@ function draw() {
 	background(230);
 	stroke('#222');
 	
-	// coordinates3D.forEach(vector => {
-	// 	fill(map(vector[2],0,100,40,40), map(vector[2],0,100,0,200), map(vector[2],0,100,50,150));
-	// 	let radius = map(vector[2],0,100,14,140);
-	// 	ellipse(vector[0],vector[1],radius,radius);
-	// });
+	coordinates3D.forEach(vector => {
+		fill(map(vector[2],0,100,40,40), map(vector[2],0,100,0,200), map(vector[2],0,100,50,150));
+		let radius = map(vector[2],0,100,14,140);
+		ellipse(vector[0],vector[1],radius,radius);
+	});
 	
-	fill('red');
+	fill('aqua');
 	let r = 15;
 	coordinates2D.forEach(vector => {
 		ellipse(vector[0],vector[1],r,r);
 	});
+	fill('red');
+	polarCoordinates.forEach(vector => {
+		ellipse(vector[0],vector[1],r,r);
+	});
 	
-	// fill('yellow');
-	// field1D.getCoordinates([-2*Math.PI,2*Math.PI,300]).forEach((vector,index,array) => {
-	// 	ellipse(map(index,0,array.length-1,-300,300),vector[0],10,10);
-	// });
+	fill('yellow');
+	field1D.getCoordinateSpace([-2*Math.PI,2*Math.PI,300]).forEach((vector,index,array) => {
+		ellipse(map(index,0,array.length-1,-300,300),vector[0],10,10);
+	});
 	
 	// origin
 	// fill('black');
