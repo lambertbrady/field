@@ -1,7 +1,3 @@
-var tmax = 50;
-var dt = .1;
-var t = 0;
-
 // updates existing array with values from another array
 var updateArrayFrom = (arrayToUpdate, arrayFrom) => arrayToUpdate.map((element,index) => [...arrayFrom[index]]);
 
@@ -178,12 +174,13 @@ class CoordinateSpace {
 	}
 	
 	// Loops through this.coordinates array
-	// thisArg DEFAULT = this (Coordinates object upon which the method was called)
+	// thisArg DEFAULT = this (CoordinateSpace object upon which the method was called)
 	// NOTE: 'this' will NOT work with an arrow function. Instead, call method with the following code:
-	//   CoordinateSpaceObj.forEach(function(args) {...}, this)
+	// CoordinateSpaceObj.forEach(function(args) {...}, this)
 	forEach(callback, thisArg = this) {
 		for (let i = 0; i < this.size; i++) {
-			callback.bind(thisArg)(this.coordinates[i].position, i, this.coordinates);
+			// callback.bind(thisArg)(element, index, array)
+			callback.bind(thisArg)(this.coordinates[i], i, this.coordinates);
 		}
 	}
 	
@@ -210,7 +207,7 @@ class CoordinateSpace {
 			
 			if (transformationIndex > 0) {
 			// use values from previous transformations as input for current transformation function
-				componentValues = [...Array(position.length)].map((_, component) => this.getTransformedVectorComponent(transformationIndex - 1, component, position));
+				componentValues = [...Array(position.length)].map((_, component) => this.getTransformedPositionComponent(transformationIndex - 1, component, position));
 			} else {
 			// use vector values as input for transformation function
 				componentValues = position;
@@ -247,35 +244,34 @@ class CoordinateSpace {
 }
 
 var func0_1D_A = (x) => 75*Math.sin(x);
-// var field1D = new Field(1);
-// field1D.addTransformation([0,func0_1D_A]);
+var field1D = new Field(1);
+field1D.addTransformation([0,func0_1D_A]);
+let coordinateSpace1D = field1D.getCoordinateSpace([-2*Math.PI,2*Math.PI,150]);
 
 let scaleX = (x,y) => 100*x;
 let yofx = (x) => 50*Math.sin(x);
 let stack = (x,y) => -1*yofx(x) + y;
 let field2D = new Field(2);
 field2D.addTransformation([0,scaleX],[1,stack]);
-var coordinates2D = new CoordinateSpace(field2D,[-Math.PI,Math.PI,50],[-150,150,5]);
-// var coordinates2D = new CoordinateSpace(field2D,[-250,250,3],[-200,200,3]);
-
+var coordinateSpace2D = new CoordinateSpace(field2D,[-Math.PI,Math.PI,50],[-150,150,5]);
 
 let f0 = (x,y) => x*Math.cos(y) - 100;
 let f1 = (x,y) => x*Math.sin(y) + 100;
 let g0 = (x,y) => 4.3*x + 20*y;
 let g1 = (x,y) => 2.1*y;
 let h0 = (x,y) => x*y;
-// let polar = new Field(2);
-// polar.addTransformation([0,f0],[1,f1]);
-// polar.addTransformation([0,g0],[1,g1]);
-// polar.addTransformation([0,h0]);
-// var polarCoordinates = new CoordinateSpace(polar,[0,25,15],[0,Math.PI,50]);
+let polar = new Field(2);
+polar.addTransformation([0,f0],[1,f1]);
+polar.addTransformation([0,g0],[1,g1]);
+polar.addTransformation([0,h0]);
+var polarCoordinateSpace = new CoordinateSpace(polar,[0,25,10],[0,Math.PI,50]);
 
 var func0_3D = (x,y,z) => x + z - 42;
 var func1_3D = (x,y,z) => y + z - 42;
-var func2_3D = (x,y,z) => 1.2*z;
-// var field3D = new Field(3);
+var func2_3D = (x,y,z) => 1.3*z;
+var field3D = new Field(3);
 // field3D.addTransformation([0,func0_3D],[1,func1_3D],[2,func2_3D]);
-// var coordinates3D = field3D.getCoordinateSpace([-300,300,6],[200,-200,5],[100,0,6]);
+var coordinateSpace3D = field3D.getCoordinateSpace([-300,300,6],[200,-200,5],[100,0,15]);
 
 /// P5JS ///
 function setup() {
@@ -284,48 +280,62 @@ function setup() {
 	//set origin to center of canvas
 	canvas.translate(width/2, height/2);
 	// NOTE: +y points downwards
+	// noLoop();
 }
 
 function draw() {
 	background(230);
 	stroke('#222');
+	noStroke();
 	
-	// coordinates3D.forEach(vector => {
-	// 	fill(map(vector[2],0,100,40,40), map(vector[2],0,100,0,200), map(vector[2],0,100,50,150));
-	// 	let radius = map(vector[2],0,100,14,140);
-	// 	ellipse(vector[0],vector[1],radius,radius);
-	// });
+	let frame = Math.floor(frameCount/3.5);
 	
-	let r = 5;
-	coordinates2D.forEach(position => {
-		fill('aqua');
-		ellipse(position[0],position[1],r,r);
+	coordinateSpace3D.forEach(function(coordinate) {
+		let radius = map(coordinate.position[2],0,100,14,140);
+		(coordinate.subSpaceIndices[2] == frame % this.dimensions[2].numPoints)
+			? fill('black')
+			: fill(map(coordinate.position[2],0,100,40,40),
+										map(coordinate.position[2],0,100,0,200),
+										map(coordinate.position[2],0,100,50,150));
+		ellipse(coordinate.position[0],coordinate.position[1],radius,radius);
 	});
-	// polarCoordinates.forEach(function(vector, index) {
-	// 	fill('red');
-	// 	ellipse(vector[0],vector[1],r,r);
-	// });
+	
+	coordinateSpace2D.forEach(function(coordinate) {
+		(coordinate.subSpaceIndices[0] == frame % this.dimensions[0].numPoints ||
+		 coordinate.subSpaceIndices[1] == 1)
+			? fill('orange') : fill('purple');
+		ellipse(coordinate.position[0],coordinate.position[1],20,8);
+	});
 	
 	noFill();
+	stroke('#222');
 	beginShape();
-	coordinates2D.forEach(vector => curveVertex(...vector));
+	polarCoordinateSpace.forEach(coordinate => curveVertex(...coordinate.position));
 	endShape();
+	noStroke();
 	
-	fill('yellow');
-	// field1D.getCoordinateSpace([-2*Math.PI,2*Math.PI,300]).forEach(function(vector,index,array) {
-	// 	let x = map(index, 0, array.length-1, -300, 300);
-	// 	ellipse(x, vector[0], 10, 10);
-	// });
+	polarCoordinateSpace.forEach(function(coordinate) {
+		(coordinate.subSpaceIndices[0] == frame % this.dimensions[0].numPoints ||
+		 coordinate.subSpaceIndices[1] == frame % this.dimensions[1].numPoints)
+			? fill('red') : fill('yellow');
+		ellipse(coordinate.position[0],coordinate.position[1],13,13);
+	});
 	
-	// origin
-	// fill('black');
-	// ellipse(0,0,r/2,r/2);
+	noFill();
+	stroke('aqua');
+	strokeWeight(4);
+	beginShape();
+	coordinateSpace1D.forEach(function(coordinate,index,array) {
+		let x = map(index, 0, array.length-1, -300, 300);
+		curveVertex(x,coordinate.position[0]);
+	});
+	endShape();
+	noStroke();
 	
-	// if (t < tmax) {
-		// background(230);
-		
-	// } else {
-		noLoop();
-	// }	
-	// t += dt;
+	fill('#444');
+	stroke('#fff');
+	strokeWeight(2);
+	let coords = coordinateSpace1D.coordinates;
+	let index = frame % coords.length;
+	ellipse(map(index, 0, coords.length-1, -300, 300), coords[index].position[0], 15, 15);
 }
