@@ -2,31 +2,11 @@
 const updateArrayFrom = (arrayToUpdate, arrayFrom) => arrayToUpdate.map((element,index) => [...arrayFrom[index]]);
 // creates new array from existing 2D array (array of arrays)
 const copyArray2D = (array) => updateArrayFrom([...Array(array.length)], array);
-const discretize = (initial, final, numPoints) => {
-	const step = (final - initial) / (numPoints - 1);
-	return [...Array(numPoints)].map((_, i) => initial + i*step);
-}
 
 class Transformation {
-	constructor(numDimensions, ...components) {
-		this.numDimensions = numDimensions;
-		
-		if (components.length === 0) {
-			this.functionSet = this.cartesian;
-		} else {
-			this.functionSet = new Map(components);
-		}
-	}
-	
-	get cartesian() {
-		// create array of arbitrary argument names
-		const argStrings = [...Array(this.numDimensions)].map((_,index) => 'dimension' + index.toString());
-		// create array of transformation functions using argument names
-		const transformationFunctions = argStrings.map((_,index,array) => new Function(...[...array, 'return ' + array[index].toString()]));
-		
-		const transformationArray = transformationFunctions.map((_,index,array) => [index, array[index]]);
-		
-		return new Map(transformationArray);
+	constructor(func) {
+		this.func = func;
+		this.numDimensions = this.func.length;
 	}
 }
 
@@ -37,7 +17,8 @@ class Field {
 		
 		this.validate();
 		
-		this.transformations = [new Transformation(numDimensions), ...transformations];
+		// this.transformations = [new Transformation(numDimensions), ...transformations];
+		this.transformations = [...transformations];
 	}
 	
 	/// VALIDATION METHODS ///
@@ -90,13 +71,9 @@ class Field {
 	
 	/// METHODS ///
 	
-	// Adds a transformation to the end of this.transformations
-	// addTransformation(...transformation) where 'transformation' is an array of key-value pairs to be converted into a Map object
-	addTransformation(...transformation) {
-		this.validateTransformation(transformation);
-		
-		this.transformations.push(new Transformation(this.numDimensions, ...transformation));
-		return this;
+	getCoordinates(dimensions, targetIndex = this.transformations.length - 1) {
+		const transformations = this.transformations.slice(0, targetIndex + 1);
+		return new Coordinates(dimensions, ...transformations);
 	}
 	
 	getCoordinateSpace(...dimensions) {
@@ -137,67 +114,27 @@ class Dimension {
 }
 
 class Point {
-	constructor(numComponents, position, dataObject = {}) {
+	constructor(numComponents, positionArray, dataObject = {}) {
 		this.numComponents = numComponents;
 		// an array with length equal to numComponents
-		this.position = position;
+		this.position = positionArray;
 		this.data = dataObject;
 	}
 	
-	getTransformedPositionComponent(componentIndex, transformations, step, currentTransformaionIndex = transformations.length - 1) {
-		let transformedComponent;
+	transform(...transformations) {
 		
-		// get transformation functions in reverse order so recursive calls use the latest transformation as the innermost function: Tstart(T1(T2(...(Ttarget(component_0,...,component_n)))))
-		const transformationIndex = transformations.length - 1 - currentTransformaionIndex;
-		const transformationFunc = transformations[transformationIndex].functionSet.get(componentIndex);
-		
-		if (!transformationFunc) {
-			// if transformation function is undefined, return position component value as is
-			transformedComponent = this.position[componentIndex];
-		} else {
-			let componentValues;
-			
-			if (currentTransformaionIndex > 0) {
-				// use values from previous transformations as input for current transformation function
-				componentValues = [...Array(this.position.length)].map((_, component) => this.getTransformedPositionComponent(component, transformations, step, currentTransformaionIndex - 1));
-			} else {
-				// use position values as input for transformation function
-				componentValues = this.position;
-			}
-			
-			////////////
-			///////// add switch statement for step function types
-			// default: (when step is undefined)
-			if (!step && step !== 0) {
-				transformedComponent = transformationFunc(...componentValues);
-			} else {
-				// transformedComponent = transformationFunc(...componentValues.map(component => step*component)) + Math.abs(1-step)*this.position[componentIndex];
-			transformedComponent = step*transformationFunc(...componentValues) + Math.abs(1-step)*this.position[componentIndex];
-			}
-		}
-		
-		return transformedComponent;
-	}
-	
-	transform(transformations, step) {
-		let transformedPosition = [...Array(this.position.length)];
-		
-		// loop through position components to set transformedPosition using values from originalPosition
-		this.position.forEach((_, componentIndex) => {
-			transformedPosition[componentIndex] = this.getTransformedPositionComponent(componentIndex, transformations, step);
-		});
-		
-		this.position = transformedPosition;
+		const compose = (...funcArr) => originalPosition => funcArr.reduceRight((transformedPosition, func) => func(...transformedPosition), originalPosition);
+		[...this.position] = compose(...transformations.map(trans => trans.func))(this.position);
 		
 		return this;
 	}
 }
 
 class Coordinates {
-	constructor(dimensions, transformations) {
+	constructor(dimensions, ...transformations) {
 		this.dimensions = dimensions;
+		this.numDimensions = this.dimensions.length;
 		this.size = this.dimensions.reduce((totalPoints, dimension) => totalPoints*dimension.numPoints, 1);
-		this.numComponents = this.dimensions.length;
 		
 		const repeatArr = this.dimensions.map((_, index, arr) => {
 			return arr.reduce((repeatVal, currentDimension, currentDimensionIndex) => {
@@ -208,23 +145,23 @@ class Coordinates {
 			}, 1);
 		});
 		this.points = [...Array(this.size)].map((_, coordinateIndex) => {
-			// const numComponents = this.field.numDimensions;
-			let coordinateComponents = [...Array(this.numComponents)];
-			let position = [...Array(this.numComponents)];
+			let coordinateComponents = [...Array(this.numDimensions)];
+			let position = [...Array(this.numDimensions)];
 			
 			// set Point position (Cartesian) and subSpaceIndex for each component based on dimension, repeatArr, and coordinateIndex
 			// i is the componentIndex
-			for (let i = 0; i < this.numComponents; i++) {
+			for (let i = 0; i < this.numDimensions; i++) {
 				const dimension = this.dimensions[i];
 				coordinateComponents[i] = Math.floor(coordinateIndex / repeatArr[i]) % dimension.numPoints;
 				position[i] = dimension.initial + coordinateComponents[i] * dimension.stepSize;
 			}
 			
-			return new Point(this.numComponents, position, {'coordinateComponents': coordinateComponents});
+			return new Point(this.numDimensions, position, {'coordinateComponents': coordinateComponents});
 		});
 		
-		if (transformations) {
-			this.transform(transformations);
+		this.transformations = [];
+		if (transformations.length !== 0) {
+			this.transform(...transformations);
 		}
 	}
 	
@@ -236,8 +173,10 @@ class Coordinates {
 		}
 	}
 	
-	transform(transformations, step) {
-		this.forEach(point  => point.transform(transformations, step));
+	// transforms this.points and adds transformations to this.transformations array
+	transform(...transformations) {
+		this.forEach(point  => point.transform(...transformations));
+		this.transformations.push(transformations);
 		return this;
 	}
 }
@@ -246,14 +185,12 @@ class CoordinateSpace {
 	
 	constructor(field, ...dimensions) {
 		this.field = field;
-		this.dimensions = dimensions.map(dimension => new Dimension(...dimension));
+		// this.dimensions = dimensions.map(dimension => new Dimension(...dimension));
+		this.dimensions = dimensions;
 		
 		this.validate();
 		
-		this.coordinateSet = [...Array(this.field.transformations.length)].map((_, index) => {
-			const transformations = this.field.transformations.slice(0, index + 1);
-			return new Coordinates(this.dimensions, transformations);
-		});
+		this.coordinateSet = [...Array(this.field.transformations.length + 1)].map((_, index) => this.field.getCoordinates(this.dimensions, index));
 	}
 	
 	get coordinates() {
@@ -262,11 +199,9 @@ class CoordinateSpace {
 	
 	// Loops through this.coordinates.points array
 	// thisArg DEFAULT = this (CoordinateSpace object upon which the method was called)
-	// NOTE: 'this' will NOT work with an arrow function. Instead, call method with the following code:
-	// CoordinateSpaceObj.forEach(function(args) {...}, this)
+	// NOTE: 'this' will NOT work with an arrow function. Instead, call method with the following code: CoordinateSpaceObj.forEach(function(args) {...}, this)
 	forEach(callback, thisArg = this) {
 		for (let i = 0; i < this.coordinates.size; i++) {
-			// callback.bind(thisArg)(element, index, array)
 			callback.bind(thisArg)(this.coordinates.points[i], i, this.coordinates.points);
 		}
 	}
@@ -282,8 +217,8 @@ class CoordinateSpace {
 
 // let innerFuncX = (x,y) => x*y/120;
 // let innerFuncY = (x,y) => (Math.pow(x,2) - Math.pow(y,2))/2/120;
-let funcX = (x,y) => x*Math.cos(y);
-let funcY = (x,y) => x*Math.sin(y);
+// let funcX = (x,y) => x*Math.cos(y);
+// let funcY = (x,y) => x*Math.sin(y);
 // let innerFuncX = (x,y) => x*Math.tan(x/250*Math.cos(y));
 // let innerFuncY = (x,y) => x*Math.tan(x/250*Math.sin(x/10+y));
 // let innerFuncX = (x,y) => 25/Math.sin(y);
@@ -291,14 +226,17 @@ let funcY = (x,y) => x*Math.sin(y);
 // let funcY = (x,y) => step*(-1000/(x*innerFunc(x)) + y) + Math.abs(1-step)*y;
 // let funcY = (x,y) => step*(1000/(x*Math.tan(x/50)) + y) + Math.abs(1-step)*y;
 // let funcY = (x,y) => step*(8000/(x*y+x*x)) + Math.abs(1-step)*y;
-// const trans1 = new Transformation(2);
-const trans1 = new Transformation(2, [0,funcX], [1,funcY]);
-// const trans2 = new Transformation(2, [0,(x,y) => x + .1*x*Math.sin(6*y)]);
-var field = new Field(2, trans1);
-// field.addTransformation([0,funcX],[1,funcY]);
-field.addTransformation([0,(x,y) => x + .1*x*Math.sin(6*y)]);
 
-let delta = 1;
+const transA = new Transformation((x,y) => [x*Math.cos(y), x*Math.sin(y)]);
+console.log(transA.func);
+const transB = new Transformation((x,y) => [x + .1*x*Math.sin(6*y), y]);
+let field = new Field(2, transA, transB);
+
+const dim0 = new Dimension(0, 200, 10);
+const dim1 = new Dimension(0, 2*Math.PI, 100);
+let space = field.getCoordinateSpace(dim0, dim1);
+
+// let delta = 1;
 // field.addTransformation([0,(x,y) => x + 100]);
 // field.addTransformation([0,(x,y) => delta*250*Math.sin(delta*x) + Math.abs(1-delta)*x]);
 // field.addTransformation([0,(x,y) => .5*x],[1,(x,y) => 2*y]);
@@ -306,10 +244,8 @@ let delta = 1;
 // field.addTransformation([0,(x,y) => 1.5*x],[1,(x,y) => y/5]);
 // let space = field.getCoordinateSpace([0,100,3],[0,50,3]);
 // let space = field.getCoordinateSpace([-200,200,151],[-200,200,151]);
-let space = field.getCoordinateSpace([0,200,10],[0,2*Math.PI,100]);
 // let space = field.getCoordinateSpace([-200,200,10],[0,2*Math.PI,10]);
 // console.log(space.field.transformationsTest[1].functionSet);
-console.log(space.field.transformations[1]);
 // const p1 = space.transformCoordinates(new Coordinates(space.dimensions), 0, 1).points[117];
 // const p2 = space.transformCoordinates(new Coordinates(space.dimensions), 1, 1).points[117];
 // console.log(p1);
@@ -396,7 +332,7 @@ function draw() {
 		// ellipse(coordinate.position[0],coordinate.position[1],13,13);
 	// });
 	
-	space.coordinateSet[0].transform(space.field.transformations).forEach(function(coordinate) {
+	space.forEach(function(coordinate) {
 		ellipse(coordinate.position[0],coordinate.position[1],13,13);
 	})
 	
