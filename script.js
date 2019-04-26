@@ -16,24 +16,28 @@ class Transformation {
 
 class Field {
 	
-	constructor(numDimensions, ...transformations) {
-		this.numDimensions = numDimensions;
-		
-		this.validate();
-		
-		// this.transformations = [new Transformation(numDimensions), ...transformations];
+	constructor(...transformations) {
+		// check if arguments are Transformation objects
+		const areTransformations = transformations.every(trans => trans.constructor.name === 'Transformation');
+		if (!areTransformations) {
+			throw new Error('Field Error: all arguments must be Transformation objects');
+		}
+		// check if all transformation numDimensions are equal
+		const areEqualDimensions = transformations.every((trans,_,arr) => trans.numDimensions === arr[0].numDimensions);
+		if (!areEqualDimensions) {
+			throw new Error('Field Error: all Transformations provided must have equal numDimensions');
+		}
+								 
 		this.transformations = [...transformations];
+		// currently require that all transformations have same func length
+		this.numDimensions = transformations[0].numDimensions;
+		// // maximum transformation dimension
+		// this.numDimensions = transformations.reduce((max, trans) => {
+		// 	return (trans.numDimensions > max) ? trans.numDimensions : max;
+		// }, 0);
 	}
 	
 	/// VALIDATION METHODS ///
-	
-	validate() {
-		// check if numDimensions is an integer within range: [1, Infinity]
-		let hasValidNumDimensions = this.numDimensions >= 1 && this.numDimensions % 1 === 0;
-		if (!hasValidNumDimensions) {
-			throw new Error('Field Constructor Error: numDimensions must be an integer greater than or equal to 1');
-		}
-	}
 	validateTransformation(transformation) {
 		// check if second argument is a function with the number of arguments equal to numDimensions
 		transformation.forEach(transform => {
@@ -127,6 +131,14 @@ class Point {
 		this.data = dataObject;
 	}
 	
+	clone() {
+		// need to deep clone this.dataObject
+		let pointClone = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
+		pointClone.positionCartesian = [...this.positionCartesian];
+		pointClone.position = [...this.position];
+		return pointClone;
+	}
+	
 	compose(funcs) {
 		return (originalPosition, step, stepFunctionType, stepStartIndex) => funcs.reduceRight((position, func, funcIndex) => {
 			if(!step && step !== 0 || funcIndex < stepStartIndex) {
@@ -151,14 +163,6 @@ class Point {
 				});
 			}
 		}, originalPosition);
-	}
-	
-	clone() {
-		// need to deep clone this.dataObject
-		let pointClone = Object.assign(Object.create(Object.getPrototypeOf(this)), this);
-		pointClone.positionCartesian = [...this.positionCartesian];
-		pointClone.position = [...this.position];
-		return pointClone;
 	}
 	
 	// creates new Point object with updated position and returns the clone
@@ -228,6 +232,11 @@ class Coordinates {
 		return coordinatesClone;
 	}
 	
+	getAnimation(transformations, numFrames, stepFunctionType, stepStartIndex) {
+		const interval = 1/(numFrames-1);
+		return [...Array(numFrames)].map((_, index) => this.map(transformations, index*interval, stepFunctionType, stepStartIndex));
+	}
+	
 	// calls transform method on clone of this, returns transformed clone
 	map(transformations, step, stepFunctionType, stepStartIndex = this.transformations.length) {
 		return this.clone().transform(transformations, step, stepFunctionType, stepStartIndex);
@@ -239,6 +248,23 @@ class Coordinates {
 		this.forEach(point  => point.transform(transformationArr, step, stepFunctionType, stepStartIndex));
 		this.transformations.push(...transformations);
 		return this;
+	}
+	
+	// constantComponent = [0, this.numDimensions - 1]
+	// componentIndex = [0, this.dimensions[constantComponent].numPoints - 1]
+	getCurve(constantComponent, componentIndex) {
+		return this.points.filter(point => point.data.coordinateComponents[constantComponent] == componentIndex);
+	}
+	
+	getCurveSet(constantComponent) {
+		// refactor so only needs to loop through this.points once (need to not use getCurve method)
+		return [...Array(this.dimensions[constantComponent].numPoints - 2)].map((_,index,arr) => {
+				return this.getCurve(constantComponent,index + 1)
+		});
+	}
+	
+	getMesh() {
+		return [...Array(this.numDimensions)].map((_,index) => this.getCurveSet(index));
 	}
 }
 
@@ -276,23 +302,24 @@ class CoordinateSpace {
 	}
 }
 
-
-const transA = new Transformation((x,y) => [x*Math.cos(y), x*Math.sin(y)]);
-const transB = new Transformation((x,y) => [x + .1*x*Math.sin(6*y), y]);
-// remove explicit numDimensions and set to max Transformation func length provided, or require that all are equal length
-let field = new Field(2, transA, transB);
-
-const dim0 = new Dimension(0, 200, 10);
-const dim1 = new Dimension(0, 2*Math.PI, 100);
+const mult = 70;
+const transA = new Transformation((x,y) => [x*Math.cos(y/mult), x*Math.sin(y/mult)]);
+const transB = new Transformation((r,a) => [r + .1*r*Math.sin(6*a/mult), a]);
+const field = new Field(transA, transB);
+const dim0 = new Dimension(-220 - (220 + 220)/21, 220 + (220 + 220)/21, 21);
+const dim1 = new Dimension(-mult*Math.PI - (2*mult*Math.PI)/31, mult*Math.PI + (2*mult*Math.PI)/31, 31);
 // let space = field.getCoordinateSpace(dim0, dim1);
 
 // Field can be used to create Coordinates, but once created the two objects are decoupled: a change on one does not affect the other
-let coords = field.getCoordinates([dim0,dim1],1);
-// let clone = coords.clone();
-// let clone = coords.map([transB], .5, 'multiplyAfter',0);
-// clone.transform([transB], .5, 'multiplyAfter', 1);
+let coords = field.getCoordinates([dim0,dim1],0);
+const curve = coords.getCurve(0,0);
+// const curveSet0 = coords.getCurveSet(0);
+// const curveSet1 = coords.getCurveSet(1);
+// const curveSet = curveSet0.concat(curveSet1);
+const mesh = coords.getMesh();
+// let coords = new Coordinates([dim0,dim1], transA)
+const animationSet = coords.getAnimation([transA,transB],220,'multiplyBefore');
 
-// console.log(Array.isArray(Object.values(clone)[0]));
 // let coords = new Coordinates([dim0,dim1]).transform([transA,transB],.5,'multiplyAfter',1);
 // let coords = new Coordinates([dim0,dim1],transA).transform([transB],.5,'multiplyAfter');
 
@@ -317,28 +344,61 @@ function setup() {
 function draw() {
 	background(230);
 	
-	const numSteps = 120;
-	const duration = 2;
-	/////
-	const framesTotal = duration*fps;
-	const framesPerStep = framesTotal/numSteps;
-	const currentStep = Math.floor(frameCount/framesPerStep);
-	// currentStep = current coordinateSet index
-	// numSteps = coordinateSet.length
-	// progression range: [0, 2] (that's why numSteps is multiplied by 2)
-	const progression = currentStep % (2*numSteps) / (numSteps - 1);
-	const progress = (progression < 1) ? progression : (2 - progression);
+	// const numSteps = 120;
+	// const duration = 2;
+	// /////
+	// const framesTotal = duration*fps;
+	// const framesPerStep = framesTotal/numSteps;
+	// const currentStep = Math.floor(frameCount/framesPerStep);
+	// // currentStep = current coordinateSet index
+	// // numSteps = coordinateSet.length
+	// // progression range: [0, 2] (that's why numSteps is multiplied by 2)
+	// const progression = currentStep % (2*numSteps) / (numSteps - 1);
+	// const progress = (progression < 1) ? progression : (2 - progression);
 	
-	fill('red');
+	// animationSet.getAnimationIndex(frameCount)
+	const framesTotal = animationSet.length;
+	const frameRepeat = 1;
+	const frame = Math.floor(frameCount / frameRepeat);
+	let animationIndex = frame % framesTotal;
+	if ((frame % (2*framesTotal)) > (framesTotal-1)) {
+		animationIndex = Math.abs((framesTotal-1) - animationIndex);
+	}
+	
+	// let animationIndex;
+	// animationIndex = frame % framesTotal;
+	// animationIndex = frame % framesTotal;
+	
+	// fill('purple');
 	// noStroke();
-	// coords.forEach(function(coordinate) {
-	// 	ellipse(coordinate.position[0],coordinate.position[1],13,13);
+	// animationSet[animationIndex].forEach(function(point,index) {
+	// // coords.forEach(function(point,index) {
+	// 	ellipse(point.position[0],point.position[1],12,12);
 	// })
+	stroke('red');
+	// strokeWeight(3);
+	noFill();
+	animationSet[animationIndex].getMesh().forEach(curveSet => curveSet.forEach(curve => {
+		beginShape();
+		curve.forEach(point => curveVertex(...point.position));
+		endShape();
+	}));
+	
+	
+	// stroke('red');
+	// strokeWeight(3);
+	// noFill();
+	// mesh.forEach(curveSet => curveSet.forEach(curve => {
+	// 	beginShape();
+	// 	curve.forEach(point => curveVertex(...point.position));
+	// 	endShape();
+	// }));
+	// curve.forEach(point => curveVertex(...point.position));
 	
 	// fill('yellow');
-	stroke('#222');
-	const clone = coords.map([transB], progress, 'multiplyBefore', 0);
-	clone.forEach(function(coordinate) {
-		ellipse(coordinate.position[0],coordinate.position[1],13,13);
-	})
+	// stroke('#222');
+	// const clone = coords.map([transB], progress, 'multiplyBefore', 0);
+	// clone.forEach(function(coordinate) {
+	// 	ellipse(coordinate.position[0],coordinate.position[1],13,13);
+	// })
 }
