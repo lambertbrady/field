@@ -61,7 +61,7 @@ class Field {
 		// check if duplicate dimensions are included
 		let dimensionArray = transformation.map(transform => transform[0]);
 		let dimensionSet = new Set(dimensionArray);
-		let hasDuplicateDimensions = dimensionArray.length !== dimensionSet.size;
+		let hasDuplicateDimensions = dimensionArray.length !== dimensionSet.numPoints;
 		if (hasDuplicateDimensions) {
 			throw new Error('Field Transformation Error: transformation dimensions must be unique');	
 		}
@@ -81,6 +81,7 @@ class Field {
 	
 	getCoordinates(dimensions, targetIndex = this.transformations.length, optionsObject) {
 		const transformations = this.transformations.slice(0, targetIndex);
+		console.log(transformations);
 		return new Coordinates(dimensions, transformations, optionsObject);
 	}
 	
@@ -200,24 +201,28 @@ class Point {
 	}
 }
 
-class Curve {
-	constructor() {
+// class Curve {
+// 	constructor() {
 		
-	}
-}
+// 	}
+// }
 
 class Coordinates {
 	constructor(dimensions, transformations, {addControlPoints = false} = {}, dataObject = {}) {
 		this.dimensions = (addControlPoints) ? dimensions.map(dim => dim.extend()) : dimensions;
 		this.numDimensions = this.dimensions.length;
-		this.size = this.dimensions.reduce((totalPoints, dimension) => totalPoints*dimension.numPoints, 1);
+		this.numPoints = this.dimensions.reduce((totalPoints, dim) => totalPoints*dim.numPoints, 1);
+		this.numCurves = this.dimensions.reduce((curveAccumulator,_,i) => {
+			return curveAccumulator + this.getNumComponentCurves(i);
+		}, 0);
+		this.size = dimensions.map(dim => dim.numPoints);
 		
 		const repeatArr = this.dimensions.map((_, i, arr) => {
 			return arr.reduce((repeatVal, dimension, dimensionIndex) => {
 				return repeatVal *= (dimensionIndex > i) ? dimension.numPoints : 1;
 			}, 1);
 		});
-		this.points = [...Array(this.size)].map((_, coordinateIndex) => {
+		this.points = [...Array(this.numPoints)].map((_, coordinateIndex) => {
 			let coordinateComponents = [...Array(this.numDimensions)];
 			let position = [...Array(this.numDimensions)];
 			
@@ -278,169 +283,72 @@ class Coordinates {
 		return this;
 	}
 	
-	// constantComponent = [0, this.numDimensions - 1]
-	// componentIndex = [0, this.dimensions[constantComponent].numPoints - 1]
-	getCurve(constantComponent, componentIndex) {
-		return this.points.filter(point => point.data.coordinateComponents[constantComponent] == componentIndex);
-	}
-	
-	getCurveSet(constantComponent) {
-		// console.log(constantComponent);
-		const curveLength = this.dimensions.reduce((length, dimension, dimensionIndex) => {
-			// console.log(length + ' | ' + dimensionIndex + ' | ' + dimension.numPoints);
-			if (dimensionIndex === constantComponent) {
-				return 1;
-			} else {
-				return length * dimension.numPoints;
-			}
-		},1);
-		// console.log(curveLength);
-		const curveSet = [...Array(this.dimensions[constantComponent].numPoints)].map(curve => [...Array(curveLength)]);
-		this.points.forEach(point => {
-			const curveIndex = point.data.coordinateComponents[constantComponent];
-			// curveSet[curveIndex].push(point);
-		});
-		return curveSet;
-	}
-	
-	getMesh(showOuterCurves = true) {
-		return [...Array(this.numDimensions)].map((_,constantComponent) => {
-			let curveSet = this.getCurveSet(constantComponent);
-			if (!showOuterCurves) {
-				curveSet.shift();
-				curveSet.pop();
-			}
-			return curveSet;
-		});
-	}
-	
-	meshify(dimIndices = [...Array(this.numDimensions)].map((_,i) => i)) {
-		const mesh = [...Array(this.numCurves())];
-		console.log(':: ' + this.numCurves([this.dimensions[0],this.dimensions[1]]));
-		console.log(':: ' + this.numCurves([this.dimensions[0],this.dimensions[2]]));
-		console.log(':: ' + this.numCurves([this.dimensions[1],this.dimensions[2]]));
-		// this.points.forEach((point, index, arr) => {
-		// 	console.log(point.data.coordinateComponents);
-		// })
-	}
-	
-	numComponentCurves(componentIndex, dimensions = this.dimensions) {
-		return dimensions.reduce((componentCurveAccumulator,dimension,i) => {
+	getNumComponentCurves(componentIndex) {
+		// TO DO: check that componentIndex is in range of this.dimensions [0,this.numDimensions-1]
+		// make class property instead of method???
+		return this.dimensions.reduce((componentCurveAccumulator,dimension,i) => {
 			return componentCurveAccumulator *= (componentIndex !== i) ? dimension.numPoints : 1;
 		}, 1);
 	}
 	
-	getCurves(dimensions = this.dimensions) {
+	getCurveMesh() {
 		// array of curve sets for each dimension (x-curveSet, y-curveSet, z-curveSet, ...)
-		let curveArray = dimensions.map((dimension,i,arr) => {
+		let curveMesh = this.dimensions.map((dim,i) => {
 			// array of curves for each curve set (x-curve_0, x-curve_1, ...)
-			return [...Array(this.numComponentCurves(i,arr))].map(curve => {
-				// array of points for each curve (to be filled in separately)
-				return [...Array(dimension.numPoints)];
+			return [...Array(this.getNumComponentCurves(i))].map(curve => {
+				// array of points for each curve (to be filled in below)
+				return [...Array(dim.numPoints)];
 			});
 		});
-		
-		const nArr = dimensions.map(dim => dim.numPoints);
-		const nArrSet = nArr.map((_,i,arr) => {
-			let nComponentArr = arr.filter((_,j) => i !== j);
-			nComponentArr.pop();
-			nComponentArr.unshift(1);
-			return nComponentArr;
+		// array of component-based multipliers used to place points into appropriate curve sets
+		const multipliersArr = this.size.map((_,componentIndex,multsArr) => {
+			// remove element of current component, then remove last element, then place 1 at beginning
+			let componentMultipliers = multsArr.filter((_,i) => i !== componentIndex);
+			componentMultipliers.pop();
+			componentMultipliers.unshift(1);
+			// multiply each element by all elements preceding it
+			componentMultipliers = componentMultipliers.map((_,i,compMultsArr) => {
+				let multiplier = compMultsArr[i];
+				for (let j = 0; j < i; j++) {
+					multiplier *= compMultsArr[j];
+				}
+				return multiplier
+			});
+			return componentMultipliers;
 		});
-		this.points.forEach((point,index) => {
+		// fill curves with points
+		this.points.forEach(point => {
 			// point gets added once to each dimension of curve sets (point will be part of n curves, where n = this.numDimensions)
 			point.data.coordinateComponents.forEach((coordComponent,i,arr) => {
 				const curveIndex = arr.filter((_,j) => i !== j).reduce((acc,componentVal,j) => {
-					const componentMultiplier = nArrSet[i][j];
+					const componentMultiplier = multipliersArr[i][j];
 					return acc += componentMultiplier*componentVal;
 				}, 0);
 				const pointIndex = coordComponent;
-				
-				curveArray[i][curveIndex][pointIndex] = point;
+
+				curveMesh[i][curveIndex][pointIndex] = point;
 			});
 		})
-		
-		return curveArray;
-	}
-	
-	numCurves(dimensions = this.dimensions) {
-		// let numCurves = 1;
-		// let numPoints = 1
-		// // numCurves_currentDim = numCurves_prevDims * numPoints_currentDim + numPoints_prevDims
-		// for (let i = 1; i < dimensions.length; i++) {
-		// 	numPoints *= dimensions[i-1].numPoints;
-		// 	numCurves = numCurves*dimensions[i].numPoints + numPoints;
-		// }
-		
-		// const numCurves = dimensions.reduce((curveAccumulator,_,i,arr) => {
-		// 	const numComponentCurves = arr.reduce((componentCurveAccumulator,dim,j) => {
-		// 		return componentCurveAccumulator *= (i === j) ? 1 : dim.numPoints;
-		// 	}, 1);
-		// 	return curveAccumulator + numComponentCurves;
-		// }, 0);
-		
-		// return numCurves;
-		
-		return dimensions.reduce((curveAccumulator,_,i,arr) => {
-			return curveAccumulator + this.numComponentCurves(i,arr);
-		}, 0);
-	}
-}
-
-class CoordinateSpace {
-	
-	constructor(field, ...dimensions) {
-		this.field = field;
-		// this.dimensions = dimensions.map(dimension => new Dimension(...dimension));
-		this.dimensions = dimensions;
-		
-		this.validate();
-		
-		this.coordinateSet = [...Array(this.field.transformations.length + 1)].map((_, index) => (index === 0) ? new Coordinates(this.dimensions) : this.field.getCoordinates(this.dimensions, index));
-	}
-	
-	get coordinates() {
-		return this.coordinateSet[this.coordinateSet.length - 1];
-	}
-	
-	// Loops through this.coordinates.points array
-	// thisArg DEFAULT = this (CoordinateSpace object upon which the method was called)
-	// NOTE: 'this' will NOT work with an arrow function. Instead, call method with the following code: CoordinateSpaceObj.forEach(function(args) {...}, this)
-	forEach(callback, thisArg = this) {
-		for (let i = 0; i < this.coordinates.size; i++) {
-			callback.bind(thisArg)(this.coordinates.points[i], i, this.coordinates.points);
-		}
-	}
-	
-	validate() {
-		// check if number of dimensions provided is equal to number of dimensions
-		let haveEqualLengths = this.dimensions.length === this.field.numDimensions;
-		if (!haveEqualLengths) {
-			throw new Error('Field Dimensions Error: number of dimensions must equal numDimensions');
-		}
+		return curveMesh;
 	}
 }
 
 const mult = 70;
-const transA = new Transformation((x,y,z) => [x*Math.cos(y/mult), x*Math.sin(y/mult),z]);
-const transB = new Transformation((r,a,z) => [r + .1*r*Math.sin(6*a/mult), a, z]);
-const field = new Field(transA, transB);
+const transA = new Transformation((x,y,z,w) => [x*Math.cos(y/mult), x*Math.sin(y/mult),z,w]);
+const transB = new Transformation((r,a,z,w) => [r + .1*r*Math.sin(6*a/mult), a, z,w]);
+// const field = new Field(transA,transB);
 const dim0 = new Dimension(-220, 220, 9);
 const dim1 = new Dimension(-mult*Math.PI, mult*Math.PI, 9);
-const dim2 = new Dimension(30, 10, 3);
-// let space = field.getCoordinateSpace(dim0, dim1);
+const dim2 = new Dimension(20, 0, 6);
+const dim3 = new Dimension(-500, 500, 4);
 
 // Field can be used to create Coordinates, but once created the two objects are decoupled: a change on one does not affect the other
-let coords = field.getCoordinates([dim0,dim1,dim2],0,{addControlPoints: false});
-// const curveArray = coords.getCurves();
-// coords.meshify();
-// const curve = coords.getCurve(0,1);
-// const curveSet = coords.getCurveSet(0);
-
+// TO DO: find a better way to deal with Transformations and Fields when creating new Coordinates
+// let coords = field.getCoordinates([dim0,dim1,dim2,dim3],0);
+let coords = new Coordinates([dim0,dim1,dim2,dim3],[]);
 const numFrames = 200;
-const animationSet = coords.getAnimation([transA,transB],numFrames,'multiplyBefore');
+const animationSet = coords.getAnimation([transA],numFrames,'multiplyBefore');
 animationSet.forEach((coords,index) => coords.data.color = [270, index/2, 95]);
-// const meshSet = animationSet.map(coords => coords.getMesh(true));
 // let coords = new Coordinates([dim0,dim1]).transform([transA,transB],.5,'multiplyAfter',1);
 // let coords = new Coordinates([dim0,dim1],transA).transform([transB],.5,'multiplyAfter');
 
@@ -459,25 +367,10 @@ function setup() {
 	//set origin to center of canvas
 	canvas.translate(width/2, height/2);
 	// NOTE: +y points downwards
-	// noLoop();
+ 	// noLoop();
 }
 
 function draw() {
-	// background(230);
-	
-	// const numSteps = 120;
-	// const duration = 2;
-	// /////
-	// const framesTotal = duration*fps;
-	// const framesPerStep = framesTotal/numSteps;
-	// const currentStep = Math.floor(frameCount/framesPerStep);
-	// // currentStep = current coordinateSet index
-	// // numSteps = coordinateSet.length
-	// // progression range: [0, 2] (that's why numSteps is multiplied by 2)
-	// const progression = currentStep % (2*numSteps) / (numSteps - 1);
-	// const progress = (progression < 1) ? progression : (2 - progression);
-	
-	// animationSet.getAnimationIndex(frameCount)
 	const framesTotal = animationSet.length;
 	const frameRepeat = 1;
 	const frame = Math.floor(frameCount / frameRepeat);
@@ -488,50 +381,51 @@ function draw() {
 
 	colorMode(HSB);
 	background(...animationSet[animationIndex].data.color);
-	const indexX = 0;
-	const indexY = 1;
-	const indexZ = 2;
-	// noStroke();
-	stroke('#222');
-	// fill(...animationSet[animationIndex].data.color);
-	animationSet[animationIndex].forEach(function(point,index) {
-		const pos = point.position;
-		const r = pos[indexZ];
-		fill((r <= 15) ? 'yellow' : ((r <= 25) ? 'red' : 'blue'));
-		ellipse(pos[indexX],pos[indexY],r,r);
+	noFill();
+	const animationCurveSet = animationSet[animationIndex].getCurveMesh();
+	
+	// w-curves
+	colorMode(RGB);
+	const c = color('rgba(255, 255, 255, .2)');
+	stroke(c);
+	animationCurveSet[3].forEach(curve => {
+		beginShape();		
+		curve.forEach(p => {
+			const pos = p.position;
+			curveVertex(pos[0]+pos[2]+pos[3], pos[1]-pos[2]-pos[3]/2)
+		});
+		endShape();
 	});
 	
-	noFill();
-	// meshSet[animationIndex].forEach(curveSet => curveSet.forEach(curve => {
-	// 	beginShape();
-	// 	curve.forEach(point => curveVertex(...point.position));
-	// 	endShape();
-	// }));
-	
+	const drawCurve = (curve) => {
+		beginShape();
+		curve.forEach(p => {
+			const pos = p.position;
+			const w = pos[3];
+			if (w > dim3.initial+1 && w < dim3.final-1) {
+				curveVertex(pos[0]+pos[2]+w, pos[1]-pos[2]-w/2);
+			}
+		});
+		endShape();
+	};
+	// x-curves
 	stroke('orange');
 	strokeWeight(2);
-	const animationCurveSet = animationSet[animationIndex].getCurves();
-	animationCurveSet[0].forEach(curve => {
-		beginShape();		
-		curve.forEach(point => curveVertex(point.position[indexX],point.position[indexY]));
-		endShape();
-	});
+	animationCurveSet[0].forEach(curve => drawCurve(curve));
+	// y-curves
 	stroke('green');
-	animationCurveSet[1].forEach(curve => {
-		beginShape();		
-		curve.forEach(point => curveVertex(point.position[indexX],point.position[indexY]));
-		endShape();
+	animationCurveSet[1].forEach(curve => drawCurve(curve));
+	// z-curves
+	stroke('red');
+	animationCurveSet[2].forEach(curve => drawCurve(curve));
+	
+	// all points
+	stroke('#ddd');
+	animationSet[animationIndex].forEach(p => {
+		const pos = p.position;
+		const w = pos[3];
+		if (w > dim3.initial+1 && w < dim3.final-1) {
+			point(pos[0]+pos[2]+w, pos[1]-pos[2]-w/2);
+		}
 	});
-	// stroke('green');
-	// strokeWeight(1);
-	// beginShape();
-	// const animationCurve = animationSet[animationIndex].getCurve(1,2);
-	// console.log(animationCurve.length);
-	// animationCurve.forEach(point => curveVertex(point.position[indexX],point.position[indexY]));
-	// endShape();
-	// noStroke();
-	// fill('green');
-	// animationCurve.forEach(point => {
-	// 	ellipse(point.position[indexX],point.position[indexY],6,6);
-	// })
 }
