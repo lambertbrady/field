@@ -1,16 +1,13 @@
-// updates existing array with values from another array
-const updateArrayFrom = (arrayToUpdate, arrayFrom) => arrayToUpdate.map((element,index) => [...arrayFrom[index]]);
-// creates new array from existing 2D array (array of arrays)
-const copyArray2D = (array) => updateArrayFrom([...Array(array.length)], array);
-
 class Transformation {
-	constructor(func) {
+	constructor(func, stepFunction = (func.toString().includes('this')) ? 'custom' : 'multiplyBefore') {
 		this.func = func;
 		this.numDimensions = this.func.length;
+		// this.hasCustomStepFunc = this.func.toString().includes('this');
+		this.stepFunction = stepFunction;
 	}
 	
 	clone() {
-		return new Transformation(this.func);
+		return new Transformation(this.func, this.stepFunction);
 	}
 }
 
@@ -81,7 +78,6 @@ class Field {
 	
 	getCoordinates(dimensions, targetIndex = this.transformations.length, optionsObject) {
 		const transformations = this.transformations.slice(0, targetIndex);
-		console.log(transformations);
 		return new Coordinates(dimensions, transformations, optionsObject);
 	}
 	
@@ -160,55 +156,61 @@ class Point {
 		return pointClone;
 	}
 	
-	compose(funcs) {
-		return (originalPosition, step, stepFunctionType, stepStartIndex) => funcs.reduceRight((position, func, funcIndex) => {
-			if(!step && step !== 0 || funcIndex < stepStartIndex) {
-				return func(...position);
-			} else {
-				stepFunctionType = (!stepFunctionType) ? 'multiplyBefore' : stepFunctionType;
-				return position.map((_, i) => {
-					let transformedComponent;
-					switch (stepFunctionType) {
-					// multiply by step before or after func is applied
-						case 'multiplyBefore':
-							transformedComponent = func(...position.map(val => step*val))[i];
-							break;
-						case 'multiplyAfter':
-							transformedComponent = step*func(...position)[i];
-							break;
-						// case 'custom':
-						// 	transformedComponent = = func(...position, step);
-						// 	break;
-					}
-					return transformedComponent + Math.abs(1-step)*position[i];
-				});
-			}
-		}, originalPosition);
+	compose(transformations) {
+		return (originalPosition, step, stepStartIndex) => {
+			return transformations.reduceRight((position, trans, transIndex) => {
+				const func = trans.func;
+				if(!step && step !== 0 || transIndex < stepStartIndex) {
+					return func(...position);
+				} else {
+					return position.map((_, i) => {
+						let transformedComponent;
+						switch (trans.stepFunction) {
+						// multiply by step before or after func is applied
+							case 'multiplyBefore':
+								transformedComponent = func(...position.map(component => step*component))[i];
+								break;
+							case 'multiplyAfter':
+								transformedComponent = step*func(...position)[i];
+								break;
+							case 'custom':
+								// console.log(func);
+								// console.log(step);
+								transformedComponent = func.call(step, ...position)[i];
+								break;
+						}
+						return transformedComponent + Math.abs(1-step)*position[i];
+					});
+				}
+			}, originalPosition);
+		}
 	}
 	
 	// creates new Point object with updated position and returns the clone
-	map(transformations, step, stepFunctionType, stepStartIndex) {
-		const newPosition = this.compose(transformations.map(trans => trans.func))(this.positionCartesian, step, stepFunctionType, stepStartIndex);
+	transformMap(transformations, step, stepStartIndex) {
+		const newPosition = this.compose(transformations)(this.positionCartesian, step, stepStartIndex);
 		let pointClone = this.clone();
 		pointClone.position = newPosition;
 		return pointClone;
 	}
 	
 	// updates this.position and returns Point
-	transform(transformations, step, stepFunctionType, stepStartIndex) {
-		this.position = this.compose(transformations.map(trans => trans.func))(this.positionCartesian, step, stepFunctionType, stepStartIndex);
+	transform(transformations, step, stepStartIndex) {
+		this.position = this.compose(transformations)(this.positionCartesian, step, stepStartIndex);
 		return this;
 	}
 }
 
-// class Curve {
-// 	constructor() {
-		
-// 	}
-// }
+class Curve {
+	constructor(numPoints, dataObject = {}) {
+		this.numPoints = numPoints;
+		this.points = [...Array(numPoints)];
+		this.data = dataObject;
+	}
+}
 
 class Coordinates {
-	constructor(dimensions, transformations, {addControlPoints = false} = {}, dataObject = {}) {
+	constructor(dimensions, transformations = [], {addControlPoints = false} = {}, dataObject = {}) {
 		this.dimensions = (addControlPoints) ? dimensions.map(dim => dim.extend()) : dimensions;
 		this.numDimensions = this.dimensions.length;
 		this.numPoints = this.dimensions.reduce((totalPoints, dim) => totalPoints*dim.numPoints, 1);
@@ -265,20 +267,20 @@ class Coordinates {
 		return coordinatesClone;
 	}
 	
-	getAnimation(transformations, numFrames, stepFunctionType, stepStartIndex) {
+	getAnimation(transformations, numFrames, stepStartIndex) {
 		const interval = 1/(numFrames-1);
-		return [...Array(numFrames)].map((_, index) => this.transformMap(transformations, index*interval, stepFunctionType, stepStartIndex));
+		return [...Array(numFrames)].map((_, index) => this.transformMap(transformations, index*interval, stepStartIndex));
 	}
 	
 	// calls transform method on clone of this, returns transformed clone
-	transformMap(transformations, step, stepFunctionType, stepStartIndex = this.transformations.length) {
-		return this.clone().transform(transformations, step, stepFunctionType, stepStartIndex);
+	transformMap(transformations, step, stepStartIndex = this.transformations.length) {
+		return this.clone().transform(transformations, step, stepStartIndex);
 	}
 	
 	// transforms this.points and adds transformations to this.transformations array
-	transform(transformations, step, stepFunctionType, stepStartIndex = this.transformations.length) {
+	transform(transformations, step, stepStartIndex = this.transformations.length) {
 		const transformationArr = this.transformations.concat(transformations);
-		this.forEach(point  => point.transform(transformationArr, step, stepFunctionType, stepStartIndex));
+		this.forEach(point  => point.transform(transformationArr, step, stepStartIndex));
 		this.transformations.push(...transformations);
 		return this;
 	}
@@ -291,15 +293,11 @@ class Coordinates {
 		}, 1);
 	}
 	
-	getCurveMesh() {
-		// array of curve sets for each dimension (x-curveSet, y-curveSet, z-curveSet, ...)
-		let curveMesh = this.dimensions.map((dim,i) => {
-			// array of curves for each curve set (x-curve_0, x-curve_1, ...)
-			return [...Array(this.getNumComponentCurves(i))].map(curve => {
-				// array of points for each curve (to be filled in below)
-				return [...Array(dim.numPoints)];
-			});
-		});
+	getCurveMesh({hideOuterCurves = false} = {}) {
+		const options = {
+			"hideOuterCurves": hideOuterCurves
+		};
+		
 		// array of component-based multipliers used to place points into appropriate curve sets
 		const multipliersArr = this.size.map((_,componentIndex,multsArr) => {
 			// remove element of current component, then remove last element, then place 1 at beginning
@@ -316,41 +314,123 @@ class Coordinates {
 			});
 			return componentMultipliers;
 		});
+		// console.log(multipliersArr);
+		
+		const multipliersArrNew = this.size.map((_,componentIndex,multsArr) => {
+			// remove element of current component, then remove last element, then place 1 at beginning
+			let componentMultipliers = multsArr.filter((_,i) => i !== componentIndex);
+			componentMultipliers.pop();
+			componentMultipliers.unshift(1);
+			// multiply each element by all elements preceding it
+			componentMultipliers = componentMultipliers.map((_,i,compMultsArr) => {
+				let multiplier = compMultsArr[i];
+				for (let j = 0; j < i; j++) {
+					multiplier *= compMultsArr[j];
+				}
+				return multiplier
+			});
+			
+			componentMultipliers.splice(componentIndex, 0, -1);
+			
+			return componentMultipliers;
+		});
+		// console.log(multipliersArrNew);
+		
+		// array of curve sets for each dimension (x-curveSet, y-curveSet, z-curveSet, ...)
+		let curveMesh = this.dimensions.map((dim, dimIndex, dimArr) => {
+			// array of curves for each curve set (x-curve_0, x-curve_1, ...)
+			return [...Array(this.getNumComponentCurves(dimIndex))].map((_, curveIndex, curveArr) => {
+				const multArr = multipliersArrNew[dimIndex];
+				let constantCoordinateComponents = {};
+				for (let i = 0; i < multArr.length; i++) {
+					if (multArr[i] >= 0) {
+						// console.log(curveIndex + ' | ' + curveArr.length + ' | ' + multArr[i] + ' | ' + dimArr[i].numPoints + ' || ' + i + ' | ' + dimArr.map(dim => dim.numPoints) + ' | ' + dimArr[i].numPoints);
+						constantCoordinateComponents[i] = (Math.floor(curveIndex / multArr[i]) % curveArr.length) % dimArr[i].numPoints;
+					}
+				}
+				// array of points for each curve (to be filled in below)
+				return new Curve(dim.numPoints, {'constantCoordinateComponents': constantCoordinateComponents});
+				// return [...Array(dim.numPoints)];
+			});
+		});
+
 		// fill curves with points
 		this.points.forEach(point => {
 			// point gets added once to each dimension of curve sets (point will be part of n curves, where n = this.numDimensions)
 			point.data.coordinateComponents.forEach((coordComponent,i,arr) => {
-				const curveIndex = arr.filter((_,j) => i !== j).reduce((acc,componentVal,j) => {
-					const componentMultiplier = multipliersArr[i][j];
-					return acc += componentMultiplier*componentVal;
-				}, 0);
+				
+				// convert point's coordinateComponets to curve set index 
+				const curveIndex = arr.filter((_,j) => i !== j)
+					.reduce((acc,componentVal,j) => {
+						return acc += multipliersArr[i][j]*componentVal;
+					}
+			  	,0);
 				const pointIndex = coordComponent;
+				// console.log(arr + ' | ' + i + ' | ' + curveIndex + ' | ' + pointIndex);
 
-				curveMesh[i][curveIndex][pointIndex] = point;
+				curveMesh[i][curveIndex].points[pointIndex] = point;
 			});
 		})
+		
+		if (options.hideOuterCurves) {
+			curveMesh = curveMesh.map((curveSet) => {
+				return curveSet.filter((curve) => {
+					let isInnerCurve = true;
+					for (let [key, value] of Object.entries(curve.data.constantCoordinateComponents)) {
+						if (value === 0 || value === this.dimensions[key].numPoints - 1) {
+							isInnerCurve = false;
+							break;
+						}
+					};
+					return isInnerCurve;
+				});
+			})
+		}
 		return curveMesh;
 	}
 }
 
 const mult = 70;
-const transA = new Transformation((x,y,z,w) => [x*Math.cos(y/mult), x*Math.sin(y/mult),z,w]);
-const transB = new Transformation((r,a,z,w) => [r + .1*r*Math.sin(6*a/mult), a, z,w]);
-// const field = new Field(transA,transB);
-const dim0 = new Dimension(-220, 220, 9);
-const dim1 = new Dimension(-mult*Math.PI, mult*Math.PI, 9);
-const dim2 = new Dimension(20, 0, 6);
-const dim3 = new Dimension(-500, 500, 4);
+// const transA = new Transformation((x,y,z) => [x*Math.cos(y/mult), x*Math.sin(y/mult),z]);
+// const transB = new Transformation((r,a,w) => [r*a/2/mult + .2*r*Math.sin(6*a/mult), a, 2*w], 'multiplyBefore');
+// const transA = new Transformation(function(x,y) {
+// 	return [this*x*Math.cos(this*y/mult), this*x*Math.sin(this*y/mult)];
+// });
+// const transB = new Transformation(function(r,a) {
+// 	return [this*r*a/2/mult + .1*this*r*Math.sin(6*this*a/mult), a/1.3];
+// });
+
+// const r = (x,y,z) => Math.sqrt(x*x + y*y + z*z);
+// const theta = (x,y,z) => (r(x,y,z) === 0) ? 0 : Math.atan2(x,z);
+// const phi = (x,y,z) => (r(x,y,z) === 0) ? 0 : Math.acos(z/r(x,y,z));
+const scaleY = 60;
+const scaleZ = 30;
+const r = (x,y,z) => x*Math.cos(y)*Math.sin(z);
+const theta = (x,y,z) => x*Math.sin(y)*Math.sin(z);
+const phi = (x,y,z) => x*Math.cos(z);
+const transA = new Transformation((x,y,z) => [r(x,y/scaleY,z/scaleZ), theta(x,y/scaleY,z/scaleZ), phi(x,y/scaleY,z/scaleZ)], 'multiplyBefore');
+
+// const dim0 = new Dimension(-220, 220, 11);
+// const dim1 = new Dimension(-mult*Math.PI, 0, 15);
+// const dim2 = new Dimension(-200, 200, 3);
+const dim0 = new Dimension(0, 60*Math.PI, 10);
+const dim1 = new Dimension(0, scaleY*Math.PI, 10);
+const dim2 = new Dimension(0, scaleZ*2*Math.PI, 10);
 
 // Field can be used to create Coordinates, but once created the two objects are decoupled: a change on one does not affect the other
 // TO DO: find a better way to deal with Transformations and Fields when creating new Coordinates
-// let coords = field.getCoordinates([dim0,dim1,dim2,dim3],0);
-let coords = new Coordinates([dim0,dim1,dim2,dim3],[]);
-const numFrames = 200;
-const animationSet = coords.getAnimation([transA],numFrames,'multiplyBefore');
-animationSet.forEach((coords,index) => coords.data.color = [270, index/2, 95]);
-// let coords = new Coordinates([dim0,dim1]).transform([transA,transB],.5,'multiplyAfter',1);
-// let coords = new Coordinates([dim0,dim1],transA).transform([transB],.5,'multiplyAfter');
+// let coords = field.getCoordinates([dim0,dim1],0);
+let coords = new Coordinates([dim0.extend(), dim1.extend(), dim2.extend()]);
+// let coordsA = new Coordinates([dim0.extend(),dim1.extend(),dim2], [transA]);
+const numFrames = 50;
+let animationSet = coords.getAnimation([transA], numFrames);
+let animationCurveSet = animationSet.map(set => set.getCurveMesh({"hideOuterCurves": true}));
+console.log(animationCurveSet[0]);
+// sequential animation
+// let animationSet = coords.getAnimation([transA], numFrames/2).concat(coordsA.getAnimation([transB], numFrames/2));
+// combined animation
+// const animationSet = coords.getAnimation([transA,transB], numFrames);
+// animationSet.forEach((coord,index) => coord.data.color = [270, index/(numFrames/100), 95]);
 
 // // 
 // let animationSet = coordsA.interpolate([transA,transB],.7);
@@ -359,13 +439,13 @@ animationSet.forEach((coords,index) => coords.data.color = [270, index/2, 95]);
 // // 
 // let animationSet = coordSpace.interpolate(coordIndexStart,coordIndexEnd,.7);
 
-const fps = 60;
+const fps = 30;
 /// P5JS ///
 function setup() {
 	frameRate(fps);  //default value is 60
-	canvas = createCanvas(700, 500);
+	canvas = createCanvas(700, 550, WEBGL);
 	//set origin to center of canvas
-	canvas.translate(width/2, height/2);
+	// canvas.translate(width/2, height/2);
 	// NOTE: +y points downwards
  	// noLoop();
 }
@@ -380,52 +460,51 @@ function draw() {
 	}
 
 	colorMode(HSB);
-	background(...animationSet[animationIndex].data.color);
-	noFill();
-	const animationCurveSet = animationSet[animationIndex].getCurveMesh();
+	// background(...animationSet[animationIndex].data.color);
+	background('#fafafa');
+	rotateX(frameCount * 0.01);
+	rotateY(frameCount * -0.002);
+	// rotateZ(frameCount * -0.04);
+	// rotateX(-.1);
+	// rotateY(-.4);
+	// rotateZ(-.2);
 	
-	// w-curves
-	colorMode(RGB);
-	const c = color('rgba(255, 255, 255, .2)');
-	stroke(c);
-	animationCurveSet[3].forEach(curve => {
-		beginShape();		
-		curve.forEach(p => {
-			const pos = p.position;
-			curveVertex(pos[0]+pos[2]+pos[3], pos[1]-pos[2]-pos[3]/2)
-		});
-		endShape();
-	});
+	// noFill();
+	// TODO: fix hideOuterCurves for higher dimensions
+	// const animationCurveSet = animationSet[animationIndex].getCurveMesh({"hideOuterCurves": true});
 	
+	// colorMode(RGB);
+	// const c = color('rgba(255, 255, 255, .2)');
+	// stroke(c);
 	const drawCurve = (curve) => {
+		noFill();
 		beginShape();
-		curve.forEach(p => {
+		curve.points.forEach(p => {
 			const pos = p.position;
-			const w = pos[3];
-			if (w > dim3.initial+1 && w < dim3.final-1) {
-				curveVertex(pos[0]+pos[2]+w, pos[1]-pos[2]-w/2);
-			}
+			curveVertex(pos[0], pos[1], pos[2]);
 		});
 		endShape();
 	};
+	
+	let currentCurveSet = animationCurveSet[animationIndex];
+	// strokeWeight(2);
 	// x-curves
 	stroke('orange');
-	strokeWeight(2);
-	animationCurveSet[0].forEach(curve => drawCurve(curve));
+	currentCurveSet[0].forEach(curve => drawCurve(curve));
 	// y-curves
 	stroke('green');
-	animationCurveSet[1].forEach(curve => drawCurve(curve));
+	currentCurveSet[1].forEach(curve => drawCurve(curve));
 	// z-curves
-	stroke('red');
-	animationCurveSet[2].forEach(curve => drawCurve(curve));
-	
+	stroke('purple');
+	currentCurveSet[2].forEach(curve => drawCurve(curve));
 	// all points
-	stroke('#ddd');
-	animationSet[animationIndex].forEach(p => {
-		const pos = p.position;
-		const w = pos[3];
-		if (w > dim3.initial+1 && w < dim3.final-1) {
-			point(pos[0]+pos[2]+w, pos[1]-pos[2]-w/2);
-		}
-	});
+	// stroke('#ddd');
+	// animationSet[animationIndex].forEach(p => {
+	// 	const pos = p.position;
+	// 	push();
+	// 	stroke('purple');
+	// 	translate(pos[0],pos[1],pos[2]);
+	// 	point();
+	// 	pop();
+	// });
 }
