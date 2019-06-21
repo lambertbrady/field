@@ -1,13 +1,16 @@
 class Transformation {
-	constructor(func, stepFunction = (func.toString().includes('this')) ? 'custom' : 'multiplyBefore') {
+	constructor(func, {stepFunction = (func.toString().includes('this')) ? 'custom' : 'multiplyBefore'} = {}) {
 		this.func = func;
 		this.numDimensions = this.func.length;
+		this.options = {
+			// "outputRange": outputRange,
+			"stepFunction": stepFunction
+		};
 		// this.hasCustomStepFunc = this.func.toString().includes('this');
-		this.stepFunction = stepFunction;
 	}
 	
 	clone() {
-		return new Transformation(this.func, this.stepFunction);
+		return new Transformation(this.func, this.options);
 	}
 }
 
@@ -165,7 +168,7 @@ class Point {
 				} else {
 					return position.map((_, i) => {
 						let transformedComponent;
-						switch (trans.stepFunction) {
+						switch (trans.options.stepFunction) {
 						// multiply by step before or after func is applied
 							case 'multiplyBefore':
 								transformedComponent = func(...position.map(component => step*component))[i];
@@ -174,8 +177,6 @@ class Point {
 								transformedComponent = step*func(...position)[i];
 								break;
 							case 'custom':
-								// console.log(func);
-								// console.log(step);
 								transformedComponent = func.call(step, ...position)[i];
 								break;
 						}
@@ -392,7 +393,7 @@ class Coordinates {
 
 const mult = 70;
 // const transA = new Transformation((x,y,z) => [x*Math.cos(y/mult), x*Math.sin(y/mult),z]);
-// const transB = new Transformation((r,a,w) => [r*a/2/mult + .2*r*Math.sin(6*a/mult), a, 2*w], 'multiplyBefore');
+const transB = new Transformation((r,a,w) => [r + 0*Math.cos(w), a + 50*Math.cos(w), w + 50*Math.cos(r)], {stepFunction: 'multiplyAfter'});
 // const transA = new Transformation(function(x,y) {
 // 	return [this*x*Math.cos(this*y/mult), this*x*Math.sin(this*y/mult)];
 // });
@@ -400,37 +401,46 @@ const mult = 70;
 // 	return [this*r*a/2/mult + .1*this*r*Math.sin(6*this*a/mult), a/1.3];
 // });
 
-// const r = (x,y,z) => Math.sqrt(x*x + y*y + z*z);
-// const theta = (x,y,z) => (r(x,y,z) === 0) ? 0 : Math.atan2(x,z);
-// const phi = (x,y,z) => (r(x,y,z) === 0) ? 0 : Math.acos(z/r(x,y,z));
 const scaleY = 60;
 const scaleZ = 30;
 const r = (x,y,z) => x*Math.cos(y)*Math.sin(z);
 const theta = (x,y,z) => x*Math.sin(y)*Math.sin(z);
 const phi = (x,y,z) => x*Math.cos(z);
-const transA = new Transformation((x,y,z) => [r(x,y/scaleY,z/scaleZ), theta(x,y/scaleY,z/scaleZ), phi(x,y/scaleY,z/scaleZ)], 'multiplyBefore');
+const transSpherical = new Transformation((x,y,z) => [r(x,y/scaleY,z/scaleZ), theta(x,y/scaleY,z/scaleZ), phi(x,y/scaleY,z/scaleZ)], {stepFunction: 'multiplyBefore'});
+
+const transCylindrical = new Transformation((x,y,z) => [x*Math.cos(2*y/scaleY), x*Math.sin(2*y/scaleY), z], {stepFunction: 'multiplyBefore'});
 
 // const dim0 = new Dimension(-220, 220, 11);
 // const dim1 = new Dimension(-mult*Math.PI, 0, 15);
 // const dim2 = new Dimension(-200, 200, 3);
-const dim0 = new Dimension(0, 60*Math.PI, 10);
-const dim1 = new Dimension(0, scaleY*Math.PI, 10);
-const dim2 = new Dimension(0, scaleZ*2*Math.PI, 10);
+const dim0 = new Dimension(0, 60*Math.PI, 6);
+const dim1 = new Dimension(0, scaleY*Math.PI, 6);
+const dim2 = new Dimension(0, scaleZ*2*Math.PI, 6);
 
 // Field can be used to create Coordinates, but once created the two objects are decoupled: a change on one does not affect the other
 // TO DO: find a better way to deal with Transformations and Fields when creating new Coordinates
 // let coords = field.getCoordinates([dim0,dim1],0);
-let coords = new Coordinates([dim0.extend(), dim1.extend(), dim2.extend()]);
-// let coordsA = new Coordinates([dim0.extend(),dim1.extend(),dim2], [transA]);
-const numFrames = 50;
-let animationSet = coords.getAnimation([transA], numFrames);
-let animationCurveSet = animationSet.map(set => set.getCurveMesh({"hideOuterCurves": true}));
-console.log(animationCurveSet[0]);
+// let coords = new Coordinates([dim0.extend(), dim1.extend(), dim2.extend()]);
+let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
+let coordsA = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
+// console.log(coords);
+const xMin = Math.min(...coords.points.map(point => point.position[0]));
+console.log(xMin == coords.dimensions[0].initial);
+// console.log(coordsA);
+const xMinA = Math.min(...coordsA.points.map(point => point.position[0]));
+// console.log(xMinA);
+// console.log(coordsA.dimensions[0].initial);
+
+const numFrames = 120;
+let animationSet = coords.getAnimation([transCylindrical], numFrames);
+
 // sequential animation
 // let animationSet = coords.getAnimation([transA], numFrames/2).concat(coordsA.getAnimation([transB], numFrames/2));
 // combined animation
 // const animationSet = coords.getAnimation([transA,transB], numFrames);
 // animationSet.forEach((coord,index) => coord.data.color = [270, index/(numFrames/100), 95]);
+
+let animationCurveSet = animationSet.map(set => set.getCurveMesh({"hideOuterCurves": true}));
 
 // // 
 // let animationSet = coordsA.interpolate([transA,transB],.7);
@@ -439,7 +449,7 @@ console.log(animationCurveSet[0]);
 // // 
 // let animationSet = coordSpace.interpolate(coordIndexStart,coordIndexEnd,.7);
 
-const fps = 30;
+const fps = 60;
 /// P5JS ///
 function setup() {
 	frameRate(fps);  //default value is 60
@@ -447,7 +457,7 @@ function setup() {
 	//set origin to center of canvas
 	// canvas.translate(width/2, height/2);
 	// NOTE: +y points downwards
- 	// noLoop();
+ 	noLoop();
 }
 
 function draw() {
@@ -462,20 +472,13 @@ function draw() {
 	colorMode(HSB);
 	// background(...animationSet[animationIndex].data.color);
 	background('#fafafa');
-	rotateX(frameCount * 0.01);
-	rotateY(frameCount * -0.002);
+	// rotateX(frameCount * 0.01);
+	rotateY(frameCount * -0.01);
 	// rotateZ(frameCount * -0.04);
-	// rotateX(-.1);
+	rotateX(-.1);
 	// rotateY(-.4);
-	// rotateZ(-.2);
+	rotateZ(.2);
 	
-	// noFill();
-	// TODO: fix hideOuterCurves for higher dimensions
-	// const animationCurveSet = animationSet[animationIndex].getCurveMesh({"hideOuterCurves": true});
-	
-	// colorMode(RGB);
-	// const c = color('rgba(255, 255, 255, .2)');
-	// stroke(c);
 	const drawCurve = (curve) => {
 		noFill();
 		beginShape();
@@ -487,16 +490,19 @@ function draw() {
 	};
 	
 	let currentCurveSet = animationCurveSet[animationIndex];
-	// strokeWeight(2);
 	// x-curves
 	stroke('orange');
+	// curveSet[0].forEach(curve => drawCurve(curve));
 	currentCurveSet[0].forEach(curve => drawCurve(curve));
 	// y-curves
 	stroke('green');
+	// curveSet[1].forEach(curve => drawCurve(curve));
 	currentCurveSet[1].forEach(curve => drawCurve(curve));
 	// z-curves
 	stroke('purple');
+	// curveSet[2].forEach(curve => drawCurve(curve));
 	currentCurveSet[2].forEach(curve => drawCurve(curve));
+	
 	// all points
 	// stroke('#ddd');
 	// animationSet[animationIndex].forEach(p => {
