@@ -145,11 +145,10 @@ class Dimension {
 }
 
 class Point {
-	constructor(positionVector, dataObject = {}) {
-		// this.positionCartesian = positionVector.slice(0);
-		this.position = positionVector.slice(0);
-		
-		this.data = dataObject;
+	constructor(position, dataObject = {}) {
+		this.position = position.slice(0);
+		// shallow copy
+		this.data = Object.assign({}, dataObject);
 	}
 	
 	*[Symbol.iterator]() {
@@ -160,19 +159,24 @@ class Point {
 	
 	static clone(self) {
 		let pointClone = Object.assign(Object.create(Object.getPrototypeOf(self)), self);
-		// pointClone.positionCartesian = self.positionCartesian.slice(0);
 		pointClone.position = self.position.slice(0);
-		pointClone.data = JSON.parse(JSON.stringify(self.data));
+		// shallow copy (same method as constructor)
+		pointClone.data = Object.assign({}, self.data);
 		return pointClone;
 	}
 	
-	// static compose(transformations, originalPosition, thisArg) {
-	compose(transformations, originalPosition = this.position, progress = 1, stepStartIndex) {
-		return transformations.reduce((position, transformation, transIndex, arr) => {
+	// transforms clone of this and returns Point clone
+	transformMap(transformations, originalPosition, progress) {
+		return Point.clone(this).transform(transformations, originalPosition, progress);
+	}
+	
+	// updates this.position and returns Point
+	transform(transformations, originalPosition = this.position, progress = 1) {
+		this.position = transformations.reduce((position, transformation, transIndex, arr) => {
 			// reverse index order
 			transIndex = arr.length - transIndex - 1;
 			const func = transformation.func;
-			if (progress === 1 || transIndex < stepStartIndex) {
+			if (progress === 1 || transIndex < arr.length-1) {
 				return func(...position);
 			} else {
 				return position.map((_, i) => {
@@ -193,16 +197,6 @@ class Point {
 				});
 			}
 		}, originalPosition);
-	}
-	
-	// creates new Point object with updated position and returns the clone
-	transformMap(transformations, originalPosition, progress, stepStartIndex) {
-		return Point.clone(this).transform(transformations, originalPosition, progress, stepStartIndex);
-	}
-	
-	// updates this.position and returns Point
-	transform(transformations, originalPosition, progress, stepStartIndex) {
-		this.position = this.compose(transformations, originalPosition, progress, stepStartIndex);
 		return this;
 	}
 }
@@ -213,10 +207,17 @@ class Curve {
 		this.points = [...Array(numPoints)];
 		this.data = dataObject;
 	}
+	
+	*[Symbol.iterator]() {
+		for (let point of this.points) {
+			yield point;
+		}
+	}
 }
 
 class Coordinates {
 	constructor(dimensions, transformations = [], {addControlPoints = false} = {}, dataObject = {}) {
+		
 		this.dimensions = (addControlPoints) ? dimensions.map(dim => dim.extend()) : dimensions;
 		this.numDimensions = this.dimensions.length;
 		this.numPoints = this.dimensions.reduce((totalPoints, dim) => totalPoints*dim.numPoints, 1);
@@ -244,14 +245,16 @@ class Coordinates {
 			return new Point(position, {'coordinateComponents': coordinateComponents});
 		});
 		this.positionsCartesian = this.points.map(point => point.position);
-		
+		// console.log(this.points[0].position);
+		// this.positions = new Float32Array(this.points.map(point => point.position).flat());
 		this.transformations = [];
 		// this.transform adds any transformations to this.transformations array
 		if (transformations.length !== 0) {
 			this.transform(transformations);
 		}
 		
-		this.data = dataObject;
+		// doesn't deep clone
+		this.data = Object.assign({}, dataObject);
 		
 		this.options = {
 			"addControlPoints": addControlPoints
@@ -267,9 +270,11 @@ class Coordinates {
 	static clone(self) {
 		let coordinatesClone = Object.assign(Object.create(Object.getPrototypeOf(self)), self);
 		// coordinatesClone.pointsCartesian = coordinatesClone.pointsCartesian.map(point => Point.clone(point));
+		coordinatesClone.size = self.size.slice(0);
 		coordinatesClone.points = coordinatesClone.points.map(point => Point.clone(point));
 		coordinatesClone.transformations = coordinatesClone.transformations.map(trans => Transformation.clone(trans));
-		coordinatesClone.data = JSON.parse(JSON.stringify(self.data));
+		// TODO: add method for deep cloning
+		coordinatesClone.data = Object.assign({}, self.data);
 		// coordinatesClone.data = Object.assign({},self.data);
 		return coordinatesClone;
 	}
@@ -282,24 +287,24 @@ class Coordinates {
 		}
 	}
 	
-	getAnimation(numFrames, transformations, stepStartIndex) {
+	getAnimation(numFrames, transformations) {
 		// TODO: require transformations
 		const stepInterval = 1/(numFrames-1);
-		return [...Array(numFrames)].map((_, i) => this.transformMap(transformations, i*stepInterval, stepStartIndex));
+		return [...Array(numFrames)].map((_, i) => this.transformMap(transformations, i*stepInterval));
 	}
 	
 	// calls transform method on clone of this, returns transformed clone
-	transformMap(transformations, progress, stepStartIndex = this.transformations.length) {
-		return Coordinates.clone(this).transform(transformations, progress, stepStartIndex);
+	transformMap(transformations, progress) {
+		return Coordinates.clone(this).transform(transformations, progress);
 	}
 	
 	// transforms this.points and adds transformations to this.transformations array, returns this
-	transform(transformations, progress, stepStartIndex = this.transformations.length) {
+	transform(transformations, progress) {
 		this.transformations = this.transformations.concat(transformations);
 		let transReverse = [...this.transformations].reverse();
 		// mutates each Point in this.points array
 		this.forEach((point,i)  => {
-			point.transform(transReverse, this.positionsCartesian[i], progress, stepStartIndex)
+			point.transform(transReverse, this.positionsCartesian[i], progress);
 		 });
 		return this;
 	}
@@ -445,6 +450,7 @@ class CoordinatesAnimation {
 	}
 }
 
+
 // const mult = 70;
 // const transA = new Transformation((x,y,z) => [x*Math.cos(y/mult), x*Math.sin(y/mult),z]);
 const transB = new Transformation((r,a,w) => [r + 0*Math.cos(w), a + 50*Math.cos(w), w + 50*Math.cos(r)], {stepFunction: 'multiplyAfter'});
@@ -468,46 +474,44 @@ const dim0 = new Dimension(0, 60*Math.PI, 6);
 const dim1 = new Dimension(0, scaleY*Math.PI, 6);
 const dim2 = new Dimension(0, scaleZ*2*Math.PI, 6);
 
-// Field can be used to create Coordinates, but once created the two objects are decoupled: a change on one does not affect the other
-// TO DO: find a better way to deal with Transformations and Fields when creating new Coordinates
-// let coords = field.getCoordinates([dim0,dim1],0);
-// let coords = new Coordinates([dim0.extend(), dim1.extend(), dim2.extend()]);
 let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
+// const keys = Object.keys(coords);
+// for (let i = 0; i < keys.length; i++) {
+// 	const prop = keys[i];
+// 	if (coords[prop] instanceof Array) {console.log(prop)};
+// }
 // console.log(coords);
 let coordsCyl = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
-// console.log(coordsA);
 // const xMin = Math.min(...coords.points.map(point => point.position[0]));
 // const xMinA = Math.min(...coordsA.points.map(point => point.position[0]));
 let testPoint = new Point([10,10,0]);
 const T1 = new Transformation((x,y,z) => [x-100,y+100,z]);
 const T2 = new Transformation((x,y,z) => [2*x,y/2,z]);
 // T2(...T1(...))
+console.time('pointTransform');
 let testPointT_A = testPoint.transformMap([T1,T2]);
 let testPointT_B = testPoint.transformMap([T1]).transform([T2]);
-// console.log('========');
-// console.log(testPoint.position);
-// console.log(testPointT_A.position);
-// console.log(testPointT_B.position);
+console.timeEnd('pointTransform');
 
 const transTest = new Transformation((r,a,w) => [r/2, a, 0], {stepFunction: 'multiplyBefore'});
 const numFrames = 120;
 let animationSet = coordsCyl.getAnimation(numFrames, [transTest]);
 
 //////////
+console.time('animation');
 let animation = new CoordinatesAnimation(numFrames, coords, [
 		{progress: 0, transformations: []},
 		{progress: 75, transformations: [transCylindrical]},
 		{progress: 100, transformations: [transTest]}
 	]
 );
+console.timeEnd('animation');
 // for (let point of coords) {
-// 	console.log(typeof point);
+// 	console.log(point instanceOf Point);
 // }
 // clone of this.points array!
-let testIter = [...coords];
-let iterator = coords[Symbol.iterator]();
-// console.log(iterator.next());
-// console.log(iterator.next());
+// let testIter = [...coords];
+// let iterator = coords[Symbol.iterator]();
 // console.log(iterator.next());
 
 // let animation = new CoordinatesAnimation(numFrames, coords, [
@@ -526,22 +530,7 @@ let iterator = coords[Symbol.iterator]();
 // 	]
 // );
 //////////
-
-// let animationSet = coords.getAnimation(numFrames/2, [transCylindrical]).concat(coords.transformMap([transCylindrical]).getAnimation(numFrames/2, [transTest]));
-// let animationSet = coordsCyl.getAnimation(numFrames,[],0);
-// let animation = new Animation();
-
-// sequential animation
-// let animationSet = coords.getAnimation(numFrames/2, [transA]).concat(coordsA.getAnimation(numFrames/2, [transB]));
-// combined animation
-// const animationSet = coords.getAnimation(numFrames, [transA,transB]);
-// animationSet.forEach((coord,index) => coord.data.color = [270, index/(numFrames/100), 95]);
-
-// let animationCurveSet = animationSet.map(set => set.getCurveMesh({"hideOuterCurves": true}));
-let animationCurveSet = animation.frames.map(set => set.getCurveMesh({"hideOuterCurves": true}));
-
-// // 
-// let animationSet = coordSpace.interpolate(coordIndexStart,coordIndexEnd,.7);
+let animationCurveSet = animation.frames.map(coords => coords.getCurveMesh({"hideOuterCurves": true}));
 
 const fps = 60;
 /// P5JS ///
@@ -551,10 +540,12 @@ function setup() {
 	//set origin to center of canvas
 	// canvas.translate(width/2, height/2);
 	// NOTE: +y points downwards
- 	noLoop();
+ 	// noLoop();
 }
 
 function draw() {
+	if (frameCount == 1) console.time('draw');
+	
 	const framesTotal = animationSet.length;
 	const frameRepeat = 1;
 	const frame = Math.floor(frameCount / frameRepeat);
@@ -576,43 +567,45 @@ function draw() {
 	const drawCurve = (curve) => {
 		noFill();
 		beginShape();
-		curve.points.forEach(p => {
-			const pos = p.position;
-			curveVertex(pos[0], pos[1], pos[2]);
-		});
+		for (const point of curve) {
+			const [x,y,z] = point.position;
+			curveVertex(x,y,z);
+		}
 		endShape();
 	};
 	
 	let currentCurveSet = animationCurveSet[animationIndex];
+	
 	// x-curves
 	stroke('orange');
-	// curveSet[0].forEach(curve => drawCurve(curve));
 	currentCurveSet[0].forEach(curve => drawCurve(curve));
 	// y-curves
 	stroke('green');
-	// curveSet[1].forEach(curve => drawCurve(curve));
 	currentCurveSet[1].forEach(curve => drawCurve(curve));
 	// z-curves
 	stroke('purple');
-	// curveSet[2].forEach(curve => drawCurve(curve));
 	currentCurveSet[2].forEach(curve => drawCurve(curve));
-
-	push();
-	fill('red');
-	stroke('black');
-	translate(...testPoint.position);
-	sphere(40);
-	pop();
-	push();
-	fill('yellow');
-	translate(...testPointT_A.position);
-	sphere(40);
-	pop();
-	push();
-	stroke('blue');
-	translate(...testPointT_B.position);
-	sphere(40);
-	pop();
+	
+	if (animationIndex == framesTotal-1) {
+		console.timeEnd('draw');	
+		noLoop();
+	}
+	// push();
+	// fill('red');
+	// stroke('black');
+	// translate(...testPoint.position);
+	// sphere(40);
+	// pop();
+	// push();
+	// fill('yellow');
+	// translate(...testPointT_A.position);
+	// sphere(40);
+	// pop();
+	// push();
+	// stroke('blue');
+	// translate(...testPointT_B.position);
+	// sphere(40);
+	// pop();
 	
 	// all points
 	// stroke('#ddd');
