@@ -1,37 +1,49 @@
 class Transformation {
-	constructor(func, {progressMethod = 'multiplyBefore'} = {}) {
+	constructor(func, {
+			progressMethod = 'multiplyBefore',
+			scale = Array(func().length).fill(1)
+		} = {})
+	{
+		
 		// TODO: require 'custom' instead of guessing it? (stricture validation)
 		if (func.length - func().length === 1) progressMethod = 'custom';
 		
 		// TODO: add function validation
 		this.func = func;
-		this.numDimensions = this.func.length;
+		this.numDimensions = func().length;
 		this.options = {
 			// "outputRange": outputRange,
-			"progressMethod": progressMethod
+			"progressMethod": progressMethod,
+			"scale": scale
 		};
 		
 		// make Transformation immutable
 		Object.freeze(this);
 	}
 	
+	getScaledPosition(position) {
+		return position.map((component,i) => component*this.options.scale[i]);
+	}
+	
 	getProgressedPosition(position, progress = 1) {
 		// TODO: validation, position.length === this.numDimensions, progress range [0,1]
+		const pos = this.getScaledPosition(position);
 		return position.map((component, i) => {
 			let progressedComponent;
 			switch (this.options.progressMethod) {
 				case 'multiplyBefore':
 					// f(k*x, k*y, k*z)
 					// multiply components by progress, then evaluate
-					progressedComponent = this.func(...position.map(comp => progress*comp))[i];
+					progressedComponent = this.func(...pos.map(comp => progress*comp))[i];
 					break;
 				case 'multiplyAfter':
 					// k*func(x,y,z)
 					// evaluate with position components, then multiply by progress
-					progressedComponent = progress*this.func(...position)[i];
+					progressedComponent = progress*this.func(...pos)[i];
 					break;
 				case 'custom':
-					progressedComponent = this.func(...position, progress)[i];
+					// multiply by progress as defined by user with extra func argument
+					progressedComponent = this.func(...pos, progress)[i];
 					break;
 			}
 			return progressedComponent + (1-progress)*component;
@@ -124,13 +136,8 @@ class Point {
 	transform(transformations, originalPosition = this.position, progress) {
 		// TODO: validation for progress between [0,1]
 		this.position = transformations.reduce((position, transformation, transIndex) => {
-			const func = transformation.func;
-			if (transIndex > 0) {
-				// last argument needed for 'custom' progressMethod
-				return func(...position, 1);
-			} else {
-				return transformation.getProgressedPosition(position, progress);
-			}
+			if (transIndex > 0) progress = 1;
+			return transformation.getProgressedPosition(position, progress);
 		}, originalPosition);
 		return this;
 	}
@@ -278,7 +285,6 @@ class Coordinates {
 				}
 				return multiplier
 			});
-			
 			componentMultipliers.splice(componentIndex, 0, -1);
 			
 			return componentMultipliers;
@@ -375,37 +381,49 @@ class CoordinatesAnimation {
 	}
 }
 
+// scale factors
 const scaleY = 60;
 const scaleZ = 30;
-const r = (x,y,z) => (x)*Math.cos(y)*Math.sin(z);
-const theta = (x,y,z) => (x)*Math.sin(y)*Math.sin(z);
-const phi = (x,y,z) => (x)*Math.cos(z);
-const transSpherical = new Transformation((x,y,z,step) => [
-	r(step*x,step*y/scaleY,step*z/scaleZ),
-	theta(step*x,step*y/scaleY,step*z/scaleZ),
-	phi(step*x,step*y/scaleY,step*z/scaleZ)
-]);
-const transTest = new Transformation((r,a,w,step) => [step*r, -step*a/2, step*w/4]);
-const transRadial = new Transformation((x,y,step) => [step*x*Math.cos(2*step*y/scaleY) - step*150, step*x*Math.sin(2*step*y/scaleY) - step*step*70]);
-const transCylindrical = new Transformation((x,y,z) => [x*Math.cos(2*y/scaleY), x*Math.sin(2*y/scaleY), z], {progressMethod: 'multiplyBefore'});
 
+// Dimensions
+// console.time('dimensions');
 const dim0 = new Dimension(0, scaleY*Math.PI, 6);
 const dim1 = new Dimension(0, scaleY*Math.PI, 6);
 const dim2 = new Dimension(0, scaleZ*2*Math.PI, 6);
+// console.timeEnd('dimensions');
 
-// 2D
+// Transformations
+// console.time('transformations');
+//// 3D Spherical
+const transSpherical = new Transformation((x,y,z) => [
+	x*Math.cos(y)*Math.sin(z),
+	x*Math.sin(y)*Math.sin(z),
+	x*Math.cos(z)
+], {scale: [1, 1/scaleY, 1/scaleZ]});
+//// 3D experimental
+const transTest = new Transformation((r,a,w,step) => [step*r, -step*a/2, step*w/4]);
+//// 2D Radial
+// const transRadial = new Transformation((x,y,step) => [
+// 	step*x*Math.cos(step*y) - step*150,
+// 	step*x*Math.sin(step*y) - step*step*70
+// ], {scale: [1, 2/scaleY]});
+//// 3D Cylindrical
+// const transCylindrical = new Transformation((x,y,z) => [x*Math.cos(y), x*Math.sin(y), z], {scale: [1, 2/scaleY, 1]});
+// console.timeEnd('transformations');
+
+// Coordinates
+// console.time('coordinates');
+//// 2D
 // let coords = new Coordinates([dim0.extend(),dim1.extend()]);
 // let coordsRadial = new Coordinates([dim0.extend(),dim1.extend()], [transRadial]);
-// 3D
+//// 3D
 let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
-let coordsCyl = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
-// const xMin = Math.min(...coords.points.map(point => point.position[0]));
-// const xMinA = Math.min(...coordsA.points.map(point => point.position[0]));
+// let coordsCyl = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
+// console.timeEnd('coordinates');
 
+// Animation
 const numFrames = 150;
-
-//////////
-console.time('animation');
+// console.time('animation');
 // 2D
 // let animation = new CoordinatesAnimation(numFrames, coords, [
 // 		{progress: 0},
@@ -419,13 +437,6 @@ let animation = new CoordinatesAnimation(numFrames, coords, [
 		{progress: 100, transformations: [transTest]}
 	]
 );
-console.timeEnd('animation');
-
-// clone of this.points array!
-// let testIter = [...coords];
-// let iterator = coords[Symbol.iterator]();
-// console.log(iterator.next());
-
 // let animation = new CoordinatesAnimation(numFrames, coords, [
 // 		{progress: 0},
 // 		{progress: 100, transformations: [transCylindrical, transTest]}
@@ -441,7 +452,9 @@ console.timeEnd('animation');
 // 		{progress: 100, transformations: [transTest]}
 // 	]
 // );
-//////////
+// console.timeEnd('animation');
+
+// Curves
 let animationCurveSet = animation.frames.map(coords => coords.getCurveMesh({"hideOuterCurves": true}));
 
 const fps = 60;
