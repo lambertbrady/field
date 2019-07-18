@@ -73,19 +73,19 @@ class Dimension {
 	}
 	
 	// All 'extend' methods return a new Dimension object
-	// extend a given number of steps in both directions
+	//// extend a given number of steps in both directions
 	extend(steps = 1) {
 		return new Dimension(this.initial - steps*this.stepSize,
 								   this.final + steps*this.stepSize,
 								   this.numPoints + 2*steps);
 	}
-	// extend a given number of steps before this.initial
+	//// extend a given number of steps before this.initial
 	extendBackward(steps = 1) {
 		return new Dimension(this.initial - steps*this.stepSize,
 								   this.final,
 								   this.numPoints + steps);
 	}
-	// extend a given number of steps after this.final
+	//// extend a given number of steps after this.final
 	extendForward(steps = 1) {
 		return new Dimension(this.initial,
 								   this.final + steps*this.stepSize,
@@ -99,6 +99,7 @@ class Point {
 		this.data = dataObject;
 	}
 	
+	// iterates components of this.position
 	*[Symbol.iterator]() {
 		for (let component of this.position) {
 			yield component;
@@ -119,13 +120,14 @@ class Point {
 		return Point.clone(this).transform(transformations, originalPosition, progress);
 	}
 	
-	// updates this.position and returns Point
+	// updates this.position and returns this
 	transform(transformations, originalPosition = this.position, progress) {
 		// TODO: validation for progress between [0,1]
-		this.position = transformations.reduce((position, transformation, transIndex, arr) => {
+		this.position = transformations.reduce((position, transformation, transIndex) => {
 			const func = transformation.func;
 			if (transIndex > 0) {
-				return func(...position);
+				// last argument needed for 'custom' progressMethod
+				return func(...position, 1);
 			} else {
 				return transformation.getProgressedPosition(position, progress);
 			}
@@ -144,6 +146,7 @@ class Curve {
 		// this.points = Array(numPoints).fill(new Point([...Array(numDimensions)]));
 	}
 	
+	// iterates points of this.points
 	*[Symbol.iterator]() {
 		for (let point of this.points) {
 			yield point;
@@ -209,6 +212,7 @@ class Coordinates {
 		return coordinatesClone;
 	}
 	
+	// iterates points of this.points
 	*[Symbol.iterator]() {
 		for (let point of this.points) {
 			yield point;
@@ -226,7 +230,7 @@ class Coordinates {
 	getAnimation(numFrames, transformations) {
 		// TODO: require transformations
 		const stepInterval = 1/(numFrames-1);
-		return [...Array(numFrames)].map((_, i, arr) => this.transformMap(transformations, i*stepInterval));
+		return [...Array(numFrames)].map((_, i) => this.transformMap(transformations, i*stepInterval));
 	}
 	
 	// calls transform method on clone of this, returns transformed clone
@@ -239,9 +243,9 @@ class Coordinates {
 		this.transformations = this.transformations.concat(transformations);
 		const transReverse = [...this.transformations].reverse();
 		// mutates each Point in this.points array
-		this.forEach((point,i)  => {
-			point.transform(transReverse, this.positionsCartesian[i], progress);
-		 });
+		for (let i = 0; i < this.numPoints; i++) {
+			this.points[i].transform(transReverse, this.positionsCartesian[i], progress);
+		}
 		return this;
 	}
 	
@@ -260,24 +264,8 @@ class Coordinates {
 		};
 		
 		// array of component-based multipliers used to place points into appropriate curve sets
-		const multipliersArr = this.size.map((_,componentIndex,multsArr) => {
-			// remove element of current component, then remove last element, then place 1 at beginning
-			let componentMultipliers = multsArr.filter((_,i) => i !== componentIndex);
-			componentMultipliers.pop();
-			componentMultipliers.unshift(1);
-			// multiply each element by all elements preceding it
-			componentMultipliers = componentMultipliers.map((_,i,compMultsArr) => {
-				let multiplier = compMultsArr[i];
-				for (let j = 0; j < i; j++) {
-					multiplier *= compMultsArr[j];
-				}
-				return multiplier
-			});
-			return componentMultipliers;
-		});
-		// console.log(multipliersArr);
 		
-		const multipliersArrNew = this.size.map((_,componentIndex,multsArr) => {
+		const multipliersArr = this.size.map((_,componentIndex,multsArr) => {
 			// remove element of current component, then remove last element, then place 1 at beginning
 			let componentMultipliers = multsArr.filter((_,i) => i !== componentIndex);
 			componentMultipliers.pop();
@@ -295,17 +283,15 @@ class Coordinates {
 			
 			return componentMultipliers;
 		});
-		// console.log(multipliersArrNew);
 		
 		// array of curve sets for each dimension (x-curveSet, y-curveSet, z-curveSet, ...)
 		let curveMesh = this.dimensions.map((dim, dimIndex, dimArr) => {
 			// array of curves for each curve set (x-curve_0, x-curve_1, ...)
 			return [...Array(this.getNumComponentCurves(dimIndex))].map((_, curveIndex, curveArr) => {
-				const multArr = multipliersArrNew[dimIndex];
+				const multArr = multipliersArr[dimIndex];
 				let constantCoordinateComponents = {};
 				for (let i = 0; i < multArr.length; i++) {
-					if (multArr[i] >= 0) {
-						// console.log(curveIndex + ' | ' + curveArr.length + ' | ' + multArr[i] + ' | ' + dimArr[i].numPoints + ' || ' + i + ' | ' + dimArr.map(dim => dim.numPoints) + ' | ' + dimArr[i].numPoints);
+					if (multArr[i] !== -1) {
 						constantCoordinateComponents[i] = (Math.floor(curveIndex / multArr[i]) % curveArr.length) % dimArr[i].numPoints;
 					}
 				}
@@ -316,22 +302,19 @@ class Coordinates {
 		});
 
 		// fill curves with points
-		this.forEach(point => {
+		for (const point of this) {
 			// point gets added once to each dimension of curve sets (point will be part of n curves, where n = this.numDimensions)
 			point.data.coordinateComponents.forEach((coordComponent,i,arr) => {
-				
 				// convert point's coordinateComponets to curve set index 
-				const curveIndex = arr.filter((_,j) => i !== j)
-					.reduce((acc,componentVal,j) => {
-						return acc += multipliersArr[i][j]*componentVal;
+				const curveIndex = arr.reduce((acc,componentVal,j) => {
+						const multiplier = multipliersArr[i][j];
+						return acc += (multiplier === -1) ? 0 : multiplier*componentVal;
 					}
 			  	,0);
-				const pointIndex = coordComponent;
-				// console.log(arr + ' | ' + i + ' | ' + curveIndex + ' | ' + pointIndex);
 
-				curveMesh[i][curveIndex].points[pointIndex] = point;
+				curveMesh[i][curveIndex].points[coordComponent] = point;
 			});
-		})
+		}
 		
 		if (options.hideOuterCurves) {
 			curveMesh = curveMesh.map((curveSet) => {
@@ -347,6 +330,7 @@ class Coordinates {
 				});
 			})
 		}
+		
 		return curveMesh;
 	}
 }
@@ -357,6 +341,7 @@ class CoordinatesAnimation {
 		this.coordinates = Coordinates.clone(coordinates);
 		// TODO: keyframes validation, possibly separate object
 		this.keyframes = keyframes;
+		// TODO: combine frameSet and frames, using frame object with 'keyframe' property
 		this.frameSet = [...Array(keyframes.length-1)];
 		// flattened version of frameSet
 		this.frames = [];
@@ -382,6 +367,7 @@ class CoordinatesAnimation {
 		}
 	}
 	
+	// iterates frames of this.frames
 	*[Symbol.iterator]() {
 		for (let frame of this.frames) {
 			yield frame;
@@ -391,44 +377,48 @@ class CoordinatesAnimation {
 
 const scaleY = 60;
 const scaleZ = 30;
-// const r = (x,y,z) => x*Math.cos(y)*Math.sin(z);
-// const theta = (x,y,z) => x*Math.sin(y)*Math.sin(z);
-// const phi = (x,y,z) => x*Math.cos(z);
-// const transSpherical = new Transformation((x,y,z) => [r(x,y/scaleY,z/scaleZ), theta(x,y/scaleY,z/scaleZ), phi(x,y/scaleY,z/scaleZ)], {progressMethod: 'multiplyBefore'});
-
+const r = (x,y,z) => (x)*Math.cos(y)*Math.sin(z);
+const theta = (x,y,z) => (x)*Math.sin(y)*Math.sin(z);
+const phi = (x,y,z) => (x)*Math.cos(z);
+const transSpherical = new Transformation((x,y,z,step) => [
+	r(step*x,step*y/scaleY,step*z/scaleZ),
+	theta(step*x,step*y/scaleY,step*z/scaleZ),
+	phi(step*x,step*y/scaleY,step*z/scaleZ)
+]);
+const transTest = new Transformation((r,a,w,step) => [step*r, -step*a/2, step*w/4]);
 const transRadial = new Transformation((x,y,step) => [step*x*Math.cos(2*step*y/scaleY) - step*150, step*x*Math.sin(2*step*y/scaleY) - step*step*70]);
-// const transRadial = new Transformation((x,y) => [x*Math.cos(2*y/scaleY), x*Math.sin(2*y/scaleY)], {progressMethod: 'multiplyBefore'});
-// const transCylindrical = new Transformation((x,y,z) => [x*Math.cos(2*y/scaleY), x*Math.sin(2*y/scaleY), z], {progressMethod: 'multiplyBefore'});
+const transCylindrical = new Transformation((x,y,z) => [x*Math.cos(2*y/scaleY), x*Math.sin(2*y/scaleY), z], {progressMethod: 'multiplyBefore'});
 
-const dim0 = new Dimension(0, scaleY*Math.PI, 15);
-const dim1 = new Dimension(0, scaleY*Math.PI, 15);
-// const dim2 = new Dimension(0, scaleZ*2*Math.PI, 6);
+const dim0 = new Dimension(0, scaleY*Math.PI, 6);
+const dim1 = new Dimension(0, scaleY*Math.PI, 6);
+const dim2 = new Dimension(0, scaleZ*2*Math.PI, 6);
 
 // 2D
-let coords = new Coordinates([dim0.extend(),dim1.extend()]);
+// let coords = new Coordinates([dim0.extend(),dim1.extend()]);
 // let coordsRadial = new Coordinates([dim0.extend(),dim1.extend()], [transRadial]);
 // 3D
-// let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
-// let coordsCyl = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
+let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
+let coordsCyl = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
 // const xMin = Math.min(...coords.points.map(point => point.position[0]));
 // const xMinA = Math.min(...coordsA.points.map(point => point.position[0]));
 
-// const transTest = new Transformation((r,a,w) => [r/2, a, 0], {progressMethod: 'multiplyBefore'});
 const numFrames = 150;
 
 //////////
 console.time('animation');
-let animation = new CoordinatesAnimation(numFrames, coords, [
-		{progress: 0},
-		{progress: 100, transformations: [transRadial]}
-	]
-);
+// 2D
 // let animation = new CoordinatesAnimation(numFrames, coords, [
-// 		{progress: 0, transformations: []},
-// 		{progress: 75, transformations: [transCylindrical]},
-// 		{progress: 100, transformations: [transTest]}
+// 		{progress: 0},
+// 		{progress: 100, transformations: [transRadial]}
 // 	]
 // );
+// 3D
+let animation = new CoordinatesAnimation(numFrames, coords, [
+		{progress: 0, transformations: []},
+		{progress: 50, transformations: [transSpherical]},
+		{progress: 100, transformations: [transTest]}
+	]
+);
 console.timeEnd('animation');
 
 // clone of this.points array!
@@ -463,7 +453,7 @@ let canvas;
 /// P5JS ///
 function setup() {
 	frameRate(fps);  //default value is 60
-	canvas = createCanvas(700, 550);
+	canvas = createCanvas(700, 550, WEBGL);
 	// NOTE: +y points downwards
 	drawCurve = (curve) => {
 		noFill();
@@ -477,7 +467,7 @@ function setup() {
 }
 
 function draw() {
-	translate(canvas.width/2,canvas.height/2);
+	// translate(canvas.width/2,canvas.height/2);
 	if (frameCount == 1) console.time('draw');
 	
 	const frame = Math.floor(frameCount / frameRepeat);
@@ -489,12 +479,12 @@ function draw() {
 	colorMode(HSB);
 	// background(...animationSet[animationIndex].data.color);
 	background('#fafafa');
-	// // rotateX(frameCount * 0.01);
-	// rotateY(frameCount * -0.01);
-	// // rotateZ(frameCount * -0.04);
-	// rotateX(-.1);
-	// // rotateY(-.4);
-	// rotateZ(.2);
+	// rotateX(frameCount * 0.01);
+	rotateY(frameCount * -0.03);
+	// rotateZ(frameCount * -0.04);
+	rotateX(-.2);
+	// rotateY(-.4);
+	rotateZ(.2);
 	
 	let currentCurveSet = animationCurveSet[animationIndex];
 	
@@ -505,8 +495,8 @@ function draw() {
 	stroke('green');
 	currentCurveSet[1].forEach(curve => drawCurve(curve));
 	// // z-curves
-	// stroke('purple');
-	// currentCurveSet[2].forEach(curve => drawCurve(curve));
+	stroke('purple');
+	currentCurveSet[2].forEach(curve => drawCurve(curve));
 	
 	// all points
 	// normalMaterial();
