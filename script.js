@@ -5,7 +5,7 @@ class Transformation {
 		} = {})
 	{
 		
-		// TODO: require 'custom' instead of guessing it? (stricture validation)
+		// TODO: require 'custom' instead of guessing it? (stricter validation)
 		if (func.length - func().length === 1) progressMethod = 'custom';
 		
 		// TODO: add function validation
@@ -144,13 +144,10 @@ class Point {
 }
 
 class Curve {
-	// TODO: enable curve creation that isn't tied to Coordinates class (use numDimensions)
-	constructor(numPoints, numDimensions, dataObject = {}) {
-		this.numPoints = numPoints;
-		this.numDimensions = numDimensions;
+	constructor(points, dataObject = {}) {
+		// TODO: valiation for array of points
+		this.points = points;
 		this.data = dataObject;
-		this.points = [...Array(numPoints)];
-		// this.points = Array(numPoints).fill(new Point([...Array(numDimensions)]));
 	}
 	
 	// iterates points of this.points
@@ -166,11 +163,11 @@ class Coordinates {
 		
 		this.dimensions = (addControlPoints) ? dimensions.map(dim => dim.extend()) : dimensions;
 		this.numDimensions = this.dimensions.length;
-		this.numPoints = this.dimensions.reduce((totalPoints, dim) => totalPoints*dim.numPoints, 1);
-		this.numCurves = this.dimensions.reduce((curveAccumulator, _, i) => {
-			return curveAccumulator + this.getNumComponentCurves(i);
+		this.numPoints = this.dimensions.reduce((acc, dim) => acc*dim.numPoints, 1);
+		this.numCurves = this.dimensions.reduce((acc, _, i) => {
+			return acc + this.getNumComponentCurves(i);
 		}, 0);
-		this.size = dimensions.map(dim => dim.numPoints);
+		// this.size = dimensions.map(dim => dim.numPoints);
 		
 		const repeatArr = this.dimensions.map((_, i, arr) => {
 			return arr.reduce((repeatVal, dimension, dimensionIndex) => {
@@ -195,7 +192,7 @@ class Coordinates {
 		// this.positions = new Float32Array(this.points.map(point => point.position).flat());
 		this.transformations = [];
 		// this.transform adds any transformations to this.transformations array
-		if (transformations.length !== 0) {
+		if (transformations.length > 0) {
 			this.transform(transformations);
 		}
 		
@@ -210,7 +207,7 @@ class Coordinates {
 	static clone(self) {
 		let coordinatesClone = Object.assign(Object.create(Object.getPrototypeOf(self)), self);
 		// coordinatesClone.pointsCartesian = coordinatesClone.pointsCartesian.map(point => Point.clone(point));
-		coordinatesClone.size = self.size.slice(0);
+		// coordinatesClone.size = self.size.slice(0);
 		coordinatesClone.points = coordinatesClone.points.map(point => Point.clone(point));
 		coordinatesClone.transformations = coordinatesClone.transformations.slice(0);
 		// TODO: add method for deep cloning
@@ -226,14 +223,7 @@ class Coordinates {
 		}
 	}
 	
-	// loops through this.points
-	forEach(callback, thisArg = this) {
-		for (let i = 0; i < this.numPoints; i++) {
-			// callback.bind(thisArg)(element, index, array)
-			callback.bind(thisArg)(this.points[i], i, this.points);
-		}
-	}
-	
+	// TODO: remove method and delegate to CoordinateAnimation class
 	getAnimation(numFrames, transformations) {
 		// TODO: require transformations
 		const stepInterval = 1/(numFrames-1);
@@ -264,57 +254,56 @@ class Coordinates {
 		}, 1);
 	}
 	
-	// TODO: refactor, simplify array creation
 	getCurveMesh({hideOuterCurves = false} = {}) {
 		const options = {
 			"hideOuterCurves": hideOuterCurves
 		};
 		
-		// array of component-based multipliers used to place points into appropriate curve sets
-		
-		const multipliersArr = this.size.map((_,componentIndex,multsArr) => {
-			// remove element of current component, then remove last element, then place 1 at beginning
-			let componentMultipliers = multsArr.filter((_,i) => i !== componentIndex);
-			componentMultipliers.pop();
-			componentMultipliers.unshift(1);
+		// TODO: add methods to retrieve curve properties from points and vice versa
+		const size = this.dimensions.map(dim => dim.numPoints);
+		// array of component-based multiplier arrays used to place points into appropriate curve sets
+		const multipliersArr = size.map((_,componentIndex,size) => {
+			// remove element of current component, then remove last element
+			let multipliers = size.filter((_,i) => i !== componentIndex);
+			multipliers.pop();
 			// multiply each element by all elements preceding it
-			componentMultipliers = componentMultipliers.map((_,i,compMultsArr) => {
-				let multiplier = compMultsArr[i];
-				for (let j = 0; j < i; j++) {
-					multiplier *= compMultsArr[j];
-				}
-				return multiplier
-			});
-			componentMultipliers.splice(componentIndex, 0, -1);
+			for (let i = 1; i < multipliers.length; i++) {
+				multipliers[i] *= multipliers[i-1];
+			}
+			// place 1 at beginning of array, then add value of 0 at index of current component
+			multipliers.unshift(1);
+			multipliers.splice(componentIndex, 0, 0);
 			
-			return componentMultipliers;
+			return multipliers;
 		});
 		
 		// array of curve sets for each dimension (x-curveSet, y-curveSet, z-curveSet, ...)
 		let curveMesh = this.dimensions.map((dim, dimIndex, dimArr) => {
 			// array of curves for each curve set (x-curve_0, x-curve_1, ...)
 			return [...Array(this.getNumComponentCurves(dimIndex))].map((_, curveIndex, curveArr) => {
-				const multArr = multipliersArr[dimIndex];
+				const multipliers = multipliersArr[dimIndex];
 				let constantCoordinateComponents = {};
-				for (let i = 0; i < multArr.length; i++) {
-					if (multArr[i] !== -1) {
-						constantCoordinateComponents[i] = (Math.floor(curveIndex / multArr[i]) % curveArr.length) % dimArr[i].numPoints;
+				for (let i = 0; i < multipliers.length; i++) {
+					// component where multiplier === 0 is curve's variable component
+					// TODO: add surface where multiple number of components can vary
+					if (multipliers[i] !== 0) {
+						constantCoordinateComponents[i] = (Math.floor(curveIndex / multipliers[i]) % curveArr.length) % dimArr[i].numPoints;
 					}
 				}
-				// array of points for each curve (to be filled in below)
-				return new Curve(dim.numPoints, this.numDimensions, {'constantCoordinateComponents': constantCoordinateComponents});
-				// return [...Array(dim.numPoints)];
+				return new Curve([...Array(dim.numPoints)], {'constantCoordinateComponents': constantCoordinateComponents});
 			});
 		});
 
-		// fill curves with points
+		// fill curves with points - curves are filled after creation of curveMesh array for performance reasons
+		//// only need to iterate this.points 1 time, instead of {this.numDimensions} times
 		for (const point of this) {
-			// point gets added once to each dimension of curve sets (point will be part of n curves, where n = this.numDimensions)
-			point.data.coordinateComponents.forEach((coordComponent,i,arr) => {
+			// point gets added once to each dimension of curve sets
+			//// point will be part of n curves, where n = this.numDimensions = point.data.coordinateComponents.length
+			point.data.coordinateComponents.forEach((coordComponent, i, arr) => {
 				// convert point's coordinateComponets to curve set index 
-				const curveIndex = arr.reduce((acc,componentVal,j) => {
+				const curveIndex = arr.reduce((acc, componentVal, j) => {
 						const multiplier = multipliersArr[i][j];
-						return acc += (multiplier === -1) ? 0 : multiplier*componentVal;
+						return acc += multiplier*componentVal;
 					}
 			  	,0);
 
@@ -322,6 +311,7 @@ class Coordinates {
 			});
 		}
 		
+		// TODO: add marker to curve data (display: false) instead of removing from array? if not, rename to 'removeOuterCurves'
 		if (options.hideOuterCurves) {
 			curveMesh = curveMesh.map((curveSet) => {
 				return curveSet.filter((curve) => {
@@ -341,6 +331,7 @@ class Coordinates {
 	}
 }
 
+// TODO: add render method?
 class CoordinatesAnimation {
 	constructor(numFrames, coordinates, keyframes) {
 		this.numFrames = numFrames;
@@ -387,9 +378,9 @@ const scaleZ = 30;
 
 // Dimensions
 // console.time('dimensions');
-const dim0 = new Dimension(0, scaleY*Math.PI, 6);
+const dim0 = new Dimension(0, scaleY*Math.PI, 5);
 const dim1 = new Dimension(0, scaleY*Math.PI, 6);
-const dim2 = new Dimension(0, scaleZ*2*Math.PI, 6);
+const dim2 = new Dimension(0, scaleZ*2*Math.PI, 7);
 // console.timeEnd('dimensions');
 
 // Transformations
@@ -422,7 +413,7 @@ let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
 // console.timeEnd('coordinates');
 
 // Animation
-const numFrames = 150;
+const numFrames = 200;
 // console.time('animation');
 // 2D
 // let animation = new CoordinatesAnimation(numFrames, coords, [
@@ -455,7 +446,10 @@ let animation = new CoordinatesAnimation(numFrames, coords, [
 // console.timeEnd('animation');
 
 // Curves
+// console.time('curves');
+// TODO: add curves as option to CoordinateAnimation constructor?
 let animationCurveSet = animation.frames.map(coords => coords.getCurveMesh({"hideOuterCurves": true}));
+// console.timeEnd('curves');
 
 const fps = 60;
 const framesTotal = animation.frames.length;
@@ -495,8 +489,8 @@ function draw() {
 	// rotateX(frameCount * 0.01);
 	rotateY(frameCount * -0.03);
 	// rotateZ(frameCount * -0.04);
-	rotateX(-.2);
-	// rotateY(-.4);
+	rotateX(2.5);
+	// rotateY(.4);
 	rotateZ(.2);
 	
 	let currentCurveSet = animationCurveSet[animationIndex];
