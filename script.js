@@ -1,10 +1,62 @@
-class Transformation {
-	constructor(func, {
-			progressMethod = 'multiplyBefore',
-			scale = Array(func().length).fill(1)
-		} = {})
-	{
+// class Dimension {
+// 	constructor(numPoints, initial, final) {
+// 		// TODO: okay to use arguments param?
+// 		Dimension.validate(...arguments);
 		
+// 		this.numPoints = numPoints;
+// 		this.initial = initial;
+// 		this.final = final;
+// 		this.stepSize = (initial !== final) ? (final - initial) / (numPoints - 1) : 0;
+		
+// 		// make Dimension immutable
+// 		Object.freeze(this);
+// 	}
+	
+// 	// TODO: use static validation method for all classes? (check proper way to pass in arguments - what if something changes and the validation breaks?)
+// 	static validate(numPoints, initial, final) {
+// 		// check if numPoints is an integer value
+// 		let hasIntegerNumPoints = numPoints % 1 === 0;
+// 		if (!hasIntegerNumPoints) {
+// 			throw new Error('Field Dimension Error: dimension must have an integer value for numPoints');
+// 		}
+// 		// // check if initial and final values are unique
+// 		// let haveUniqueInitialFinal = initial !== final;
+// 		// if (!haveUniqueInitialFinal) {
+// 		// 	throw new Error('Field Dimension Error: dimension must have unique initial and final values');
+// 		// }
+// 		// // check if numPoints value is at least 2
+// 		// let hasCorrectNumPoints = numPoints >= 2;
+// 		// if (!hasCorrectNumPoints) {
+// 		// 	throw new Error('Field Dimension Error: dimension must have at least 2 numPoints');
+// 		// }
+// 	}
+	
+// 	// All 'extend' methods return a new Dimension object
+// 	//// extend a given number of steps in both directions
+// 	extend(steps = 1) {
+// 		return new Dimension(this.numPoints + 2*steps,
+// 									this.initial - steps*this.stepSize,
+// 								   this.final + steps*this.stepSize);
+// 	}
+// 	//// extend a given number of steps before this.initial
+// 	extendBackward(steps = 1) {
+// 		return new Dimension(this.numPoints + steps,
+// 									this.initial - steps*this.stepSize,
+// 								   this.final);
+// 	}
+// 	//// extend a given number of steps after this.final
+// 	extendForward(steps = 1) {
+// 		return new Dimension(this.numPoints + steps,
+// 									this.initial,
+// 								   this.final + steps*this.stepSize);
+// 	}
+// }
+
+class Transformation {
+	constructor (
+		func,
+		{progressMethod = 'multiplyBefore', scale = Array(func().length).fill(1)} = {}
+	) {
 		// TODO: require 'custom' instead of guessing it? (stricter validation)
 		if (func.length - func().length === 1) progressMethod = 'custom';
 		
@@ -25,7 +77,7 @@ class Transformation {
 		return position.map((component,i) => component*this.options.scale[i]);
 	}
 	
-	getProgressedPosition(position, progress = 1) {
+	getProgressedPosition(position, progress = 1, data) {
 		// TODO: validation, position.length === this.numDimensions, progress range [0,1]
 		const pos = this.getScaledPosition(position);
 		return position.map((component, i) => {
@@ -43,7 +95,7 @@ class Transformation {
 					break;
 				case 'custom':
 					// multiply by progress as defined by user with extra func argument
-					progressedComponent = this.func(...pos, progress)[i];
+					progressedComponent = this.func.call(data, ...pos, progress, data)[i];
 					break;
 			}
 			return progressedComponent + (1-progress)*component;
@@ -51,64 +103,11 @@ class Transformation {
 	}
 }
 
-class Dimension {
-	constructor(numPoints, initial, final) {
-		// TODO: okay to use arguments param?
-		Dimension.validate(...arguments);
-		
-		this.initial = initial;
-		this.final = final;
-		this.numPoints = numPoints;
-		this.stepSize = (final - initial) / (numPoints - 1);
-		
-		// make Dimension immutable
-		Object.freeze(this);
-	}
-	
-	// TODO: use static validation method for all classes? (check proper way to pass in arguments - what if something changes and the validation breaks?)
-	static validate(numPoints, initial, final) {
-		// check if initial and final values are unique
-		let haveUniqueInitialFinal = initial !== final;
-		if (!haveUniqueInitialFinal) {
-			throw new Error('Field Dimension Error: dimension must have unique initial and final values');
-		}
-		// check if numPoints is an integer value
-		let hasIntegerNumPoints = numPoints % 1 === 0;
-		if (!hasIntegerNumPoints) {
-			throw new Error('Field Dimension Error: dimension must have an integer value for numPoints');
-		}
-		// check if numPoints value is at least 2
-		let hasCorrectNumPoints = numPoints >= 2;
-		if (!hasCorrectNumPoints) {
-			throw new Error('Field Dimension Error: dimension must have at least 2 numPoints');
-		}
-	}
-	
-	// All 'extend' methods return a new Dimension object
-	//// extend a given number of steps in both directions
-	extend(steps = 1) {
-		return new Dimension(this.numPoints + 2*steps,
-									this.initial - steps*this.stepSize,
-								   this.final + steps*this.stepSize);
-	}
-	//// extend a given number of steps before this.initial
-	extendBackward(steps = 1) {
-		return new Dimension(this.numPoints + steps,
-									this.initial - steps*this.stepSize,
-								   this.final);
-	}
-	//// extend a given number of steps after this.final
-	extendForward(steps = 1) {
-		return new Dimension(this.numPoints + steps,
-									this.initial,
-								   this.final + steps*this.stepSize);
-	}
-}
-
 class Point {
 	constructor(position, dataObject = {}) {
 		this.position = position;
 		this.data = dataObject;
+		this.numDimensions = this.position.length;
 	}
 	
 	// iterates components of this.position
@@ -137,7 +136,7 @@ class Point {
 		// TODO: validation for progress between [0,1]
 		this.position = transformations.reduce((position, transformation, transIndex) => {
 			if (transIndex > 0) progress = 1;
-			return transformation.getProgressedPosition(position, progress);
+			return transformation.getProgressedPosition(position, progress, this.data);
 		}, originalPosition);
 		return this;
 	}
@@ -159,42 +158,68 @@ class Curve {
 }
 
 class Coordinates {
-	constructor(dimensions, transformations = [], {addControlPoints = false} = {}, dataObject = {}) {
-		this.dimensions = (addControlPoints) ? dimensions.map(dim => dim.extend()) : dimensions;
-		this.numDimensions = dimensions.length;
-		
-		this.size = dimensions.map(dim => dim.numPoints);
+	constructor (
+		size,
+		domain = [...Array(size.length)].map(() => {return {initial: null, final: null}}), 
+		{transformations = []} = {},
+		dataObject = {}
+	) {
+		this.size = size;
+		this.numDimensions = this.size.length;
 		this.numPoints = this.size.reduce((acc, numPoints) => acc * numPoints, 1);
 		
-		this.componentCurves = dimensions.map((_, i, arr) => {
-			return arr.reduce((acc, dim, j) => {
-				return acc *= (i !== j) ? dim.numPoints : 1;
-			}, 1);
+		this.domain = domain.map((el, i) => {
+			if (typeof el === 'number') {
+				el = {initial: el, final: el};
+			} else if (el instanceof Array) {
+				el = {initial: el[0], final: el[1]};
+			}
+			
+			// TODO: better validation for size 1 - probably be explicit and throw error in this case
+			if (this.size[i] === 1 && el.initial !== el.final) {
+				el.final = el.initial;
+			}
+			
+			return el;
+		});
+		
+		this.componentCurves = this.size.map((numPoints, i, arr) => {
+			//////////////////
+			if (numPoints === 1) {
+				return 0;
+			} else {
+				return arr.reduce((acc, numPoints, j) => {
+					return acc *= (i !== j) ? numPoints : 1;
+				}, 1);
+			}
 		});
 		this.numCurves = this.componentCurves.reduce((acc, numComponentCurves) => acc + numComponentCurves, 0);
 		
-		const repeatArr = dimensions.map((_, i, arr) => {
-			return arr.reduce((repeatVal, dimension, dimensionIndex) => {
-				return repeatVal *= (dimensionIndex > i) ? dimension.numPoints : 1;
+		// create array of evenly spaced, cartesian points
+		const repeatArr = this.size.map((_, i, arr) => {
+			return arr.reduce((repeatVal, numPoints, j) => {
+				return repeatVal *= (j > i) ? numPoints : 1;
 			}, 1);
 		});
-		
-		this.points = [...Array(this.numPoints)];
+		const stepSize = [...Array(this.numDimensions)].map((_, i) => {
+			return (this.size[i] === 1)
+				? 0
+				: (this.domain[i].final - this.domain[i].initial) / (this.size[i] - 1);
+		});
+		// TODO: make flat array with getter method?
 		this.positionsCartesian = [...Array(this.numPoints)];
+		this.points = [...Array(this.numPoints)];
 		for (let i = 0; i < this.numPoints; i++) {
 			let coordinateComponents = [...Array(this.numDimensions)];
 			let position = [...Array(this.numDimensions)];
-			// set Point position (Cartesian) and coordinateComponents index for each component based on dimension, repeatArr, and coordinateIndex
-			this.dimensions.forEach((dimension, j) => {
-				coordinateComponents[j] = Math.floor(i / repeatArr[j]) % dimension.numPoints;
-				position[j] = dimension.initial + coordinateComponents[j] * dimension.stepSize;
+			// set Point position (Cartesian) and coordinateComponents index for each component based on domain, stepSize, repeatArr, and coordinateComponents
+			this.size.forEach((numPoints, j) => {
+				coordinateComponents[j] = Math.floor(i / repeatArr[j]) % numPoints;
+				position[j] = this.domain[j].initial + coordinateComponents[j] * stepSize[j];
 			})
-			
-			this.points[i] = new Point(position, {'coordinateComponents': coordinateComponents});
 			this.positionsCartesian[i] = position;
+			this.points[i] = new Point(position, {'coordinateComponents': coordinateComponents});
 		}
-		
-		// this.positionsCartesian = this.points.map(point => point.position);
 		
 		this.transformations = [];
 		// this.transform adds any transformations to this.transformations array
@@ -202,22 +227,19 @@ class Coordinates {
 			this.transform(transformations);
 		}
 		
-		// doesn't deep clone
-		this.data = Object.assign({}, dataObject);
-		
-		this.options = {
-			"addControlPoints": addControlPoints
-		};
+		this.data = dataObject;
 	}
 	
 	static clone(self) {
 		let coordinatesClone = Object.assign(Object.create(Object.getPrototypeOf(self)), self);
 		// coordinatesClone.pointsCartesian = coordinatesClone.pointsCartesian.map(point => Point.clone(point));
 		coordinatesClone.size = self.size.slice(0);
+		coordinatesClone.domain = self.domain.map(el => Object.assign({}, el));
+		// coordinatesClone.stepSize = self.stepSize.slice(0);
 		coordinatesClone.componentCurves = self.componentCurves.slice(0);
 		coordinatesClone.points = coordinatesClone.points.map(point => Point.clone(point));
 		coordinatesClone.transformations = coordinatesClone.transformations.slice(0);
-		// TODO: add method for deep cloning
+		// TODO: add deep clone support for arrays, possibly second-level object literals
 		coordinatesClone.data = Object.assign({}, self.data);
 		// coordinatesClone.data = Object.assign({},self.data);
 		return coordinatesClone;
@@ -251,9 +273,13 @@ class Coordinates {
 			"hideOuterCurves": hideOuterCurves
 		};
 		
+		const dimensionless = this.size.map(numPoints => numPoints === 1);
 		// TODO: add methods to retrieve curve properties from points and vice versa
 		// array of component-based multiplier arrays used to place points into appropriate curve sets
-		const multipliersArr = this.size.map((_,componentIndex,size) => {
+		const curveMultipliers = this.size.map((_, componentIndex, size) => {
+			//////////////////
+			if (dimensionless[componentIndex]) {return null};
+			
 			// remove element of current component, then remove last element
 			let multipliers = size.filter((_,i) => i !== componentIndex);
 			multipliers.pop();
@@ -265,35 +291,43 @@ class Coordinates {
 			multipliers.unshift(1);
 			multipliers.splice(componentIndex, 0, 0);
 			
+			//////////////////
+			if (dimensionless.includes(true)) {
+				multipliers.forEach((_,i,arr) => {if (dimensionless[i]) arr[i] = undefined});
+			}
+			
 			return multipliers;
 		});
 		
 		// array of curve sets for each dimension (x-curveSet, y-curveSet, z-curveSet, ...)
-		let curveMesh = this.dimensions.map((dim, dimIndex, dimArr) => {
+		let curveMesh = this.size.map((numPoints, dimIndex, size) => {
 			// array of curves for each curve set (x-curve_0, x-curve_1, ...)
 			return [...Array(this.componentCurves[dimIndex])].map((_, curveIndex, curveArr) => {
-				const multipliers = multipliersArr[dimIndex];
+				const multipliers = curveMultipliers[dimIndex];
 				let constantCoordinateComponents = {};
 				for (let i = 0; i < multipliers.length; i++) {
 					// component where multiplier === 0 is curve's variable component
 					// TODO: add surface where multiple number of components can vary
 					if (multipliers[i] !== 0) {
-						constantCoordinateComponents[i] = (Math.floor(curveIndex / multipliers[i]) % curveArr.length) % dimArr[i].numPoints;
+						constantCoordinateComponents[i] = (multipliers[i]) ? (Math.floor(curveIndex / multipliers[i]) % curveArr.length) % size[i] : 0;
 					}
 				}
-				return new Curve([...Array(dim.numPoints)], {'constantCoordinateComponents': constantCoordinateComponents});
+				return new Curve([...Array(numPoints)], {'constantCoordinateComponents': constantCoordinateComponents});
 			});
 		});
-
+		
 		// fill curves with points - curves are filled after creation of curveMesh array for performance reasons
 		//// only need to iterate this.points 1 time, instead of {this.numDimensions} times
 		for (const point of this) {
 			// point gets added once to each dimension of curve sets
 			//// point will be part of n curves, where n = this.numDimensions = point.data.coordinateComponents.length
 			point.data.coordinateComponents.forEach((coordComponent, i, arr) => {
+				//////////////////
+				if (dimensionless[i]) return;
 				// convert point's coordinateComponets to curve set index 
 				const curveIndex = arr.reduce((acc, componentVal, j) => {
-						const multiplier = multipliersArr[i][j];
+						let multiplier = curveMultipliers[i][j];
+						if (!multiplier) multiplier = 0;
 						return acc += multiplier*componentVal;
 					}
 			  	,0);
@@ -308,7 +342,7 @@ class Coordinates {
 				return curveSet.filter((curve) => {
 					let isInnerCurve = true;
 					for (let [key, value] of Object.entries(curve.data.constantCoordinateComponents)) {
-						if (value === 0 || value === this.dimensions[key].numPoints - 1) {
+						if ((value === 0 || value === this.size[key] - 1) && !dimensionless[key]) {
 							isInnerCurve = false;
 							break;
 						}
@@ -319,6 +353,21 @@ class Coordinates {
 		}
 		
 		return curveMesh;
+	}
+	
+	getPoints(...constantComponents) {
+		const map = new Map(constantComponents);
+		let arr = [];
+		for (const point of this) {
+			let match = true;
+			for (const [key, value] of map) {
+				if (point.data.coordinateComponents[key] !== value) {
+					match = false;
+				}
+			}
+			if (match) arr.push(point);
+		}
+		return arr;
 	}
 }
 
@@ -370,19 +419,28 @@ const scaleZ = 30;
 
 // Dimensions
 // console.time('dimensions');
-const dim0 = new Dimension(5, 0, scaleY*Math.PI);
-const dim1 = new Dimension(6, 0, scaleY*Math.PI);
-const dim2 = new Dimension(7, 0, scaleZ*2*Math.PI);
+// const dim0 = new Dimension(5, 0, scaleY*Math.PI);
+// const dim0 = new Dimension(1, 100, 100);
+// const dim1 = new Dimension(5, 0, scaleY*Math.PI);
+// const dim2 = new Dimension(6, 0, scaleZ*2*Math.PI);
 // console.timeEnd('dimensions');
 
 // Transformations
 // console.time('transformations');
+const terrain = new Transformation(function(x,y,z,step) {
+	return [
+		step*x + step*25*this.randomVal,
+		step*y,
+		step*z
+	];
+});
 //// 3D Spherical
 const transSpherical = new Transformation((x,y,z) => [
-	x*Math.cos(y)*Math.sin(z),
-	x*Math.sin(y)*Math.sin(z),
-	x*Math.cos(z)
-], {scale: [1, 1/scaleY, 1/scaleZ]});
+		x*Math.cos(y)*Math.sin(z),
+		x*Math.sin(y)*Math.sin(z),
+		x*Math.cos(z)
+	], {scale: [1, 1/scaleY, 1/scaleZ]}
+);
 //// 3D experimental
 const transTest = new Transformation((r,a,w,step) => [step*r, -step*a/2, step*w/4]);
 //// 2D Radial
@@ -400,13 +458,36 @@ const transTest = new Transformation((r,a,w,step) => [step*r, -step*a/2, step*w/
 // let coords = new Coordinates([dim0.extend(),dim1.extend()]);
 // let coordsRadial = new Coordinates([dim0.extend(),dim1.extend()], [transRadial]);
 //// 3D
-// let coords = new Coordinates([5,6,7]);
-let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
+const n = 15;
+let y_i = 0;
+let y_f = scaleY*Math.PI;
+let z_i = 0;
+let z_f = scaleZ*2*Math.PI;
+// const y_step = (y_f - y_i) / (n - 1);
+// const z_step = (z_f - z_i) / (n - 1);
+// y_i -= y_step;
+// y_f += y_step;
+// z_i -= z_step;
+// z_f += z_step;
+let coords = new Coordinates([1,n,n], [
+	150,
+	[y_i, y_f],
+	[z_i, z_f]
+]);
+// let coords = new Coordinates([20,20,2], [
+// 	[-450, 450],
+// 	[-1000, 200],
+// 	0
+// ]);
+for (const p of coords) {
+	p.data['randomVal'] = Math.random();
+}
+// let coords = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()]);
 // let coordsCyl = new Coordinates([dim0.extend(),dim1.extend(),dim2.extend()], [transCylindrical]);
 // console.timeEnd('coordinates');
 
 // Animation
-const numFrames = 200;
+const numFrames = 300;
 // console.time('animation');
 // 2D
 // let animation = new CoordinatesAnimation(numFrames, coords, [
@@ -418,7 +499,7 @@ const numFrames = 200;
 let animation = new CoordinatesAnimation(numFrames, coords, [
 		{progress: 0, transformations: []},
 		{progress: 50, transformations: [transSpherical]},
-		{progress: 100, transformations: [transTest]}
+		{progress: 100, transformations: [terrain]}
 	]
 );
 // let animation = new CoordinatesAnimation(numFrames, coords, [
@@ -437,6 +518,9 @@ let animation = new CoordinatesAnimation(numFrames, coords, [
 // 	]
 // );
 // console.timeEnd('animation');
+
+// let mesh = coords.getCurveMesh();
+// console.log(coords.points[0] === mesh[1][0].points[0]);
 
 // Curves
 // console.time('curves');
@@ -459,7 +543,7 @@ function setup() {
 		noFill();
 		beginShape();
 		for (const point of curve) {
-			curveVertex(...point.position);
+			vertex(...point.position);
 		}
 		endShape();
 	};
@@ -480,9 +564,9 @@ function draw() {
 	// background(...animationSet[animationIndex].data.color);
 	background('#fafafa');
 	// rotateX(frameCount * 0.01);
-	rotateY(frameCount * -0.03);
+	// rotateY(frameCount * -0.01);
 	// rotateZ(frameCount * -0.04);
-	rotateX(2.5);
+	rotateX(1);
 	// rotateY(.4);
 	rotateZ(.2);
 	
@@ -499,16 +583,23 @@ function draw() {
 	currentCurveSet[2].forEach(curve => drawCurve(curve));
 	
 	// all points
-	// normalMaterial();
-// 	noStroke();
-// 	fill('purple');
-// 	for (const p of animation.frames[animationIndex]) {
-// 		push();
-// 		// translate(...p.position);
-// 		// sphere(5);
-// 		circle(...p.position,8);
-// 		pop();
-// 	}
+	normalMaterial();
+	noStroke();
+	// fill('purple');
+	// for (const p of animation.frames[animationIndex]) {
+	// 	push();
+	// 	translate(...p.position);
+	// 	sphere(5);
+	// 	// circle(...p.position,8);
+	// 	pop();
+	// }
+	
+	// for (const p of points) {
+	// 	push();
+	// 	translate(...p.position);
+	// 	sphere(10);
+	// 	pop();
+	// }
 	
 	rates[animationIndex-1] = frameRate();
 	if (animationIndex == framesTotal-1) {
