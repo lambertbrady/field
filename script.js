@@ -310,7 +310,7 @@ class Field {
 		// system, form, process, layout, setup
 		// this.system = [{transformations: [null], progress: null, dimensions: this.space.dimensions}];
 		this.system = [];
-		this.domain = this.dimensions.map(dim => [dim.initial, dim.final]);
+		// this.domain = this.dimensions.map(dim => [dim.initial, dim.final]);
 		
 		this.transformations = [];
 		// this.transform adds any transformations to this.transformations array
@@ -405,9 +405,40 @@ class Field {
 	}
 	// extrude() 
 	
+	getSystemInputTrans(inputRange) {
+		// TODO: validate that inputRange.length = this.numDimensions
+		const rangeEntries = this.system.filter(obj => obj.inputRange !== null);
+		// true inputRange is the first added to the system
+		if (rangeEntries.length === 0) {
+			return this.transformationRescale(...inputRange);
+		} else {
+			const inputOutputArrs = rangeEntries.map((obj, i, arr) => {
+				return inputRange.map((_, j) => {
+					if (obj.inputRange[j].length === 0) {
+						return [];
+					} else {
+						let inputPrev = [this.space.min[j], this.space.max[j]];
+						for (let k = i; k > 0; k--) {
+							const rangePrev = arr[k-1].inputRange[j];
+							if (rangePrev.length === 0) {
+								continue;
+							} else if (rangePrev.length > 0) {
+								inputPrev = rangePrev;
+								break;
+							} else {
+								break;
+							}
+						}
+						return [...inputPrev, ...inputRange[j]];
+					}
+				});
+			});
+			return Transformation.rescale(...inputOutputArrs);
+		}
+	}
+	
 	// transforms this.points and adds transformations to this.transformations array, returns this
 	transform(transformations, {progress = 1, inputRange = null} = {}) {
-		//  (this.system.length > 0) ? this.system[this.system.length - 1].inputRange : this.domain
 		if (inputRange) {
 			// TODO: use try/except
 			// this.validateInputRange(inputRange)
@@ -433,62 +464,33 @@ class Field {
 				throw new Error('inputRange must be an Array');
 			}
 		}
-		// this.system.push({
-		// 	transformations: transformations,
-		// 	dimensions: inputRange.map((range,i) => {
-		// 		if (range instanceof Dimension) {
-		// 			return range;
-		// 		} else if (range instanceof Array) {
-		// 			return (range.length === 0) ? this.dimensions[i] : new Dimension(this.size[i], ...range);
-		// 		}
-		// 	})
-		// });
 		
 		this.system.push({
 			transformations: transformations,
 			progress: progress,
-			inputRange: inputRange
+			inputRange: inputRange,
+			inputTrans: (inputRange) ? this.getSystemInputTrans(inputRange) : null,
+			systemIndex: this.system.length
 		});
-		const inputTransformations = this.system
-			.filter(obj => obj.inputRange !== null)
-			.map((obj, i, arr) => {
-				if (i === 0) {
-					return this.transformationRescale(...obj.inputRange);
-				}
-				const rescaleArgs = [...Array(this.numDimensions)].map((_, j) => {
-					if (obj.inputRange[j].length === 0) {
-						return [];
-					} else {
-						let inputPrev = [this.space.min[j], this.space.max[j]];
-						for (let k = i; k > 0; k--) {
-							const rangePrev = arr[k-1].inputRange[j];
-							if (rangePrev.length === 0) {
-								continue;
-							} else if (rangePrev.length > 0) {
-								inputPrev = rangePrev;
-								break;
-							} else {
-								break;
-							}
-						}
-						return [...inputPrev, ...obj.inputRange[j]];
-					}
-				});
-				return Transformation.rescale(...rescaleArgs)
-			});
+		
+		// set variable so filter isn't performed for every point
+		// entries with inputRange will also have inputTrans
+		const inputRangeEntries = this.system.filter(obj => obj.inputRange !== null);
+		const lastEntryHasRange = this.system[this.system.length - 1].inputRange !== null;
 		this.points.forEach((point, i) => {
-			const inputPos = inputTransformations.reduce((pos, inputTrans, j, arr) => {
-				// TODO: confirm progress check
-				const inputProgress = (j === arr.length - 1 && this.system[this.system.length - 1] !== null) ? progress : 1;
-				return inputTrans.calc(pos, inputProgress);
+			const inputPosition = inputRangeEntries.reduce((position, obj, j, arr) => {
+				// use progress when obj is last entry in transArr AND when last entry in this.system has inputRange
+				const inputTransProgress = (lastEntryHasRange && j === arr.length - 1) ? progress : 1;
+				return obj.inputTrans.calc(position, inputTransProgress);
 			}, this.positions[i]);
 			
 			point.position = this.system.reduceRight((position, obj, j, sys) => {
+				// use progress when obj is last in entry in this.system
+				const transProgress = (j === sys.length - 1) ? progress : 1;
 				return obj.transformations.reduceRight((pos, trans) => {
-					// TODO: confirm progress check
-					return trans.calc(pos, (j === sys.length - 1) ? progress : 1, point, this);
+					return trans.calc(pos, transProgress, point, this);
 				}, position);
-			}, inputPos);
+			}, inputPosition);
 		});
 		
 		return this;
@@ -740,8 +742,8 @@ const transWavy = new Transformation((s) => [
 // const transCylindrical = new Transformation((x,y,z) => [x*Math.cos(y), x*Math.sin(y), z], {scale: [1, 2/scaleY, 1]});
 
 // Field
-const dimR = new Dimension(10, 0, 250);
-const dimTheta = new Dimension(50, 0, 2*Math.PI);
+const dimR = new Dimension(15, 0, 250);
+const dimTheta = new Dimension(70, 0, 2*Math.PI);
 // const dimTheta = new Dimension(10, 0, 10*2*Math.PI).getRescaledDimension([0,2*Math.PI],.5);
 const dimB = new Dimension(8, -200, 200);
 const dimC = new Dimension(3, -100, 100);
@@ -787,15 +789,16 @@ let collapseX = new Transformation((step,point) => [
 
 // Animation
 const numFrames = 400;
+// TODO: update so progress gets ordered automatically 
 let animation2D = field2D.getAnimation(numFrames, [
 	{progress: 0},
-	// {progress: 30, transformations: [field2D.transformationRescale([0,100],[0,100])]},
-	{progress: 50, transformations: [transRadial], inputRange: [[],[-Math.PI,Math.PI]]},
-	// {progress: 60, transformations: [transWavy], inputRange: [[0,50],[0,Math.PI]]},
+	{progress: 25, transformations: [transRadial]},
+	{progress: 50, transformations: [transWavy]},
 	// {progress: 70, transformations: [transScale1]},
 	// {progress: 65, transformations: [collapseX]},
 	// {progress: 100, transformations: [extrudeX]}
-	{progress: 100, transformations: [transScale,transWavy], inputRange: [[0,500],[0,2*Math.PI]]}
+	{progress: 75, transformations: [transWavy,transScale], inputRange: [[0,300],[-2*Math.PI,0]]},
+	{progress: 100, transformations: [field2D.transformationRescale([],[-4*Math.PI,0])]}
 ]);
 console.log(animation2D.frames.slice(-1)[0].system);
 let animation3D = field3D.getAnimation(numFrames, [
