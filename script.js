@@ -1,3 +1,39 @@
+const compose = (...fns) => (...args) => fns.reduceRight((res, fn) => [fn.call(null, ...res)], args)[0];
+function curry(func) {
+  return function curried(...args) {
+    if (args.length >= func.length) {
+      return func.apply(this, args);
+    } else {
+      return function(...args2) {
+        return curried.apply(this, args.concat(args2));
+      }
+    }
+  };
+}
+function calcInputPosition(progress, system, initialPosition) {
+	// return (progress) => {
+		const lastEntryHasDomain = !!(system[system.length - 1].domain);
+		return system
+			.filter(entry => entry.domain)
+			.reduce((pos, entry, i, sysFiltered) => {
+				// use progress when last entry in system has domain AND when i corresponds to last entry in filtered system
+				const transProgress = (lastEntryHasDomain && i === sysFiltered.length - 1) ? progress : 1;
+				return entry.inputTrans.calc(pos, transProgress);
+			}, initialPosition);
+	// }
+}
+const curriedCalcInputPosition = curry(calcInputPosition);
+function calcPointPosition(progress, field, point, inputPosition) {
+	return field.system.reduceRight((position, entry, i) => {
+		// use progress for last entry in system
+		const transProgress = (i === field.system.length - 1) ? progress : 1;
+		return entry.transformations.reduceRight((pos, trans) => {
+			return trans.calc(pos, transProgress, point, field);
+		}, position);
+	}, inputPosition);
+}
+const curriedCalcPointPosition = curry(calcPointPosition);
+
 class Transformation {
 	constructor(
 		// map, mapping, operator, operation, funcList, funcArr, generator, action
@@ -43,11 +79,13 @@ class Transformation {
 		const argList = Transformation.argList(numDimensions);
 		// return (x-a)*(d-c)/(b-a)+c;
 		return new Function(argList, `return (${argList[dimensionIndex]} - ${inputInitial}) * (${outputFinal - outputInitial}) / (${inputFinal - inputInitial}) + ${outputInitial}`);
+		// return new Function(argList, `return (arguments[${dimensionIndex}] - ${inputInitial}) * (${outputFinal - outputInitial}) / (${inputFinal - inputInitial}) + ${outputInitial}`);
 	}
 	
 	static rescale(...inputOutputArrs) {
 		// inputOutputArr ~ [inputInitial, inputFinal, outputInitial, outputFinal] OR []
 		const numDimensions = inputOutputArrs.length;
+		// console.log(...inputOutputArrs);
 		const funcArr = inputOutputArrs.map((inputOutputArr, i) => {
 			if (inputOutputArr.length === 0) {
 				return Transformation.identityElement(numDimensions, i);
@@ -99,8 +137,8 @@ class Transformation {
 					posProgressed = this.calcMapping(...arguments);
 					break;
 			}
-			// progress*T(x) + (1-progress)*x
-			return position.map((x_i, i) => posProgressed[i] + (1-progress)*x_i);
+			// (1-progress)*x + progress*T(x)
+			return position.map((x_i, i) => (1-progress)*x_i + posProgressed[i]);
 		}
 	}
 	
@@ -133,7 +171,7 @@ class Vector {
 	}
 	
 	// updates this.position and returns this
-	transform(transformations, {progress} = {}) {
+	transform(transformations, progress) {
 		// TODO: validation for progress between [0,1]
 		this.position = transformations.reduce((acc, trans, i) => {
 			return trans.calc(acc, (i > 0) ? 1 : progress, this);
@@ -142,8 +180,8 @@ class Vector {
 	}
 	
 	// transforms clone of this and returns Point clone
-	transformClone(transformations, {progress} = {}) {
-		return this.clone().transform(transformations, {progress: progress});
+	transformClone(transformations, progress) {
+		return this.clone().transform(...arguments);
 	}
 }
 
@@ -175,15 +213,17 @@ class Curve {
 
 class Dimension {
 	constructor(size, initial, final = initial) {
-		// TODO: okay to use arguments param?
-		Dimension.validate(...arguments);
+		if (size === 1 && final !== initial) {
+			throw new Error('Dimension Error: final must equal initial when size is 1');
+		} 
 
 		this.size = size;
 		this.initial = initial;
 		this.final = final
 		
-		this.stepSize = (this.size !== 1) ? (this.final - this.initial) / (this.size - 1) : 0;
-		this.elements = [...Array(this.size)].map((_, i) => this.initial + i*this.stepSize);
+		this.interval = (this.size === 1) ? 0 : (this.final - this.initial) / (this.size - 1);
+		// this.interval = (this.size === 1) ? 0 : (this.final - this.initial) / (this.size - 1);
+		this.elements = [...Array(this.size)].map((_, i) => this.initial + i*this.interval);
 		
 		this.min = Math.min(this.initial, this.final);
 		this.max = Math.max(this.initial, this.final);
@@ -191,58 +231,32 @@ class Dimension {
 		// make Dimension immutable
 		Object.freeze(this);
 	}
-
-	// TODO: use static validation method for all classes? (check proper way to pass in arguments - what if something changes and the validation breaks?)
-	static validate(size, initial, final) {
-		// check if numPoints is an integer value
-		let hasIntegerSize = size % 1 === 0;
-		if (!hasIntegerSize) {
-			throw new Error('Dimension Error: size must be an integer value');
-		}
-	}
 	
-	// map(a, b) {
-	// 	// return ((x-min)*(b-a)/(max-min)+a);
-	// 	return new Dimension(this.size, a, b);
-	// }
-	
-	// All 'extend' methods return a new Dimension object
-	//// extend a given number of steps in both directions
-	extend(steps = 1) {
-		return new Dimension(this.size + 2*steps,
-									this.initial - steps*this.stepSize,
-								   this.final + steps*this.stepSize);
+	// All methods return a new Dimension object
+	//// extend a given number of elements in both directions
+	extend(elements = 1) {
+		return new Dimension(this.size + 2*elements,
+									this.initial - elements*this.interval,
+								   this.final + elements*this.interval);
 	}
-	//// extend a given number of steps before this.initial
-	extendBackward(steps = 1) {
-		return new Dimension(this.size + steps,
-									this.initial - steps*this.stepSize,
+	//// extend a given number of elements before this.initial
+	extendBackward(elements = 1) {
+		return new Dimension(this.size + elements,
+									this.initial - elements*this.interval,
 								   this.final);
 	}
-	//// extend a given number of steps after this.final
-	extendForward(steps = 1) {
-		return new Dimension(this.size + steps,
+	//// extend a given number of elements after this.final
+	extendForward(elements = 1) {
+		return new Dimension(this.size + elements,
 									this.initial,
-								   this.final + steps*this.stepSize);
+								   this.final + elements*this.interval);
 	}
-	
-	getRescaledDimension([outputInitial, outputFinal], progress = 1) {
-		// return (x-a)*(d-c)/(b-a)+c;
-		const inputRange = this.final - this.initial;
-		const outputRange = outputFinal - outputInitial;
+	rescale([outputInitial, outputFinal], progress = 1) {
+		// (x - this.initial) * (outputFinal - outputInitial) / (this.final - this.initial) + outputInitial;
 		return new Dimension(this.size,
-									progress*outputInitial + (1-progress)*this.initial,
-									progress*outputFinal + (1-progress)*this.final
+									(1-progress)*this.initial + progress*outputInitial,
+									(1-progress)*this.final + progress*outputFinal
 		);
-	}
-	
-	getRescaledElements([outputInitial, outputFinal], progress = 1) {
-		// return (x-a)*(d-c)/(b-a)+c;
-		const inputRange = this.final - this.initial;
-		const outputRange = outputFinal - outputInitial;
-		return this.elements.map((el,i) => {
-			return progress*((el - this.initial)*(outputRange)/(inputRange) + outputInitial) + (1-progress)*el;
-		});
 	}
 }
 
@@ -257,38 +271,149 @@ class Space {
 				throw new Error('Space Error: arguments must be either Dimension or Array objects');
 			}
 		});
-		
 		this.numDimensions = this.dimensions.length;
-		this.min = this.dimensions.map(dim => dim.min);
-		this.max = this.dimensions.map(dim => dim.max);
-		this.size = this.dimensions.map(dim => dim.size);
-		this.numPoints = this.size.reduce((acc, n) => acc * n, 1);
-		this.repeatArr = this.size.map((_, i, arr) => {
-			return arr.reduce((repeatVal, n, j) => {
-				return repeatVal *= (j > i) ? n : 1;
-			}, 1);
-		});
+		this.numPoints = this.dimensions.reduce((acc, dim) => acc * dim.size, 1);
 		
-		this.vectors = [...Array(this.numPoints)];
-		this.stepIndexes = [...Array(this.numPoints)].map(() => [...Array(this.numDimensions)]);
+		this.positions = new Float32Array(this.numPoints*this.numDimensions);
+		this.compSets = new Uint32Array(this.numPoints*this.numDimensions);
+		const repeatArr = this.dimensions.map((_, i, arr) => {
+			return arr.reduce((acc, dim, j) => acc *= (j > i) ? dim.size : 1, 1);
+		});
 		for (let i = 0; i < this.numPoints; i++) {
-			let position = [...Array(this.numDimensions)];
 			this.dimensions.forEach((dim, j) => {
-				const stepIndex = Math.floor(i / this.repeatArr[j]) % dim.size;
-				
-				this.stepIndexes[i][j] = stepIndex;
-				position[j] = dim.elements[stepIndex];
+				const component = Math.floor(i / repeatArr[j]) % dim.size;
+				const flatIndex = this.getFlatIndex(i,j);
+				this.compSets[flatIndex] = component;
+				this.positions[flatIndex] = dim.elements[component];
 			})
-			this.vectors[i] = new Vector(position);
 		}
 
 		// make Space immutable
 		Object.freeze(this);
 	}
+	
+	getPointIndex(flatIndex) {
+		// corresponds to i in arr2D[i][j]
+		if (flatIndex < 0 || flatIndex >= this.numPoints*this.numDimensions) {
+			throw new Error(`flatIndex out of range: must be between [0,${this.numPoints*this.numDimensions - 1}]`);
+		}
+		return Math.floor(flatIndex / this.numDimensions);
+	}
+	getDimensionIndex(flatIndex) {
+		// corresponds to j in arr2D[i][j]
+		if (flatIndex < 0 || flatIndex >= this.numPoints*this.numDimensions) {
+			throw new Error(`flatIndex out of range: must be between [0,${this.numPoints*this.numDimensions - 1}]`);
+		}
+		return flatIndex % this.numDimensions;
+	}
+	getFlatIndex(pointIndex, dimensionIndex = 0) {
+		if (pointIndex < 0 || pointIndex >= this.numPoints) {
+			throw new Error(`pointIndex out of range: must be between [0,${this.numPoints - 1}]`);
+		}
+		if (dimensionIndex < 0 || dimensionIndex >= this.numDimensions) {
+			throw new Error(`dimensionIndex out of range: must be between [0,${this.numDimensions - 1}]`);
+		}
+		return pointIndex*this.numDimensions + dimensionIndex;
+	}
+	
+	getPosition(pointIndex) {
+		// subarray creates a new view on the existing buffer, as opposed to slice, which copies the selection
+		const startIndex = this.getFlatIndex(pointIndex);
+		return Array.from(this.positions.subarray(startIndex, startIndex + this.numDimensions));
+	}
+	getCompSet(pointIndex) {
+		// subarray creates a new view on the existing buffer, as opposed to slice, which copies the selection
+		const startIndex = this.getFlatIndex(pointIndex);
+		return Array.from(this.compSets.subarray(startIndex, startIndex + this.numDimensions));
+	}
 }
 
+function mapComp(val, a, b, c, d) {
+	return (val - a) * (d - c) / (b - a) + c;
+}
+// mapComp(mapComp(mapComp(v, a,b, c,d), c,d, e,f), e,f, g,h);
+
+class SystemEntry {
+	constructor(transformations, {progress = 1, domain = null} = {}) {
+		if (!(transformations instanceof Array) || transformations.length === 0) {
+			throw new Error('First argument must be instanceof Array with at least one element');
+		}
+		if (transformations.some(trans => !(trans instanceof Transformation))) {
+			throw new Error('Each element of transformations array must be instanceof Transformation');
+		}
+		
+		this.numDimensions = transformations[0].numDimensions;
+		if (transformations.length > 1 && transformations.some(trans => trans.numDimensions !== this.numDimensions)) {
+			throw new Error('Each Transformation must have same value for numDimensions');
+		}
+		this.transformations = transformations;
+		
+		this.progress = progress;
+		
+		if (domain !== null && !(domain instanceof Array)) {
+			throw new Error('domain must be either instanceof Array or null');
+		}
+		if (domain instanceof Array) {
+			if (domain.length !== this.numDimensions) {
+				throw new Error('Number of elements in domain must be equal to numDimensions');
+			}
+			if (domain.some(interval => !(interval instanceof Array) || (interval.length !== 0 && interval.length !== 2))) {
+				throw new Error('Each element in domain must be instanceof Array with length of either 0 or 2');
+			}			
+		}
+		// use null if each element in domain is empty: [[],[],..., []]
+		this.domain = (domain instanceof Array && domain.every(interval => interval.length === 0))
+			? null
+			: domain;
+	}
+}
+class System {
+	constructor(...entries) {
+		this.numDimensions = entries[0].numDimensions;
+		this.domainDefault = [...Array(this.numDimensions)].map(() => [0,10]);
+		this.entries = entries.map(entry => this.set(entry));
+	}
+	getTransRescale(domain) {
+		const transArgs = domain.map((interval, i) => {
+			if (interval.length === 0) {
+				return interval;
+			} else {
+				const entriesWithDomain = this.entries.filter(entry => entry.domain);
+				const prevRange = entriesWithDomain.reduceRight((acc, entry) => {
+					const range = entry.domain[i];
+					return (range.length !== 0) ? range : acc;
+				}, this.domainDefault[i]);
+				// let prevRange = this.domainDefault[i];
+				// for (let j = domainEntries.length - 1; j >= 0; j--) {
+				// 	const prev = domainEntries[j].domain[i];
+				// 	if (prev.length === 0) {
+				// 		continue;
+				// 	} else {
+				// 		prevRange = prev;
+				// 		break;
+				// 	}
+				// }
+				return [prevRange[0], prevRange[1], interval[0], interval[1]];
+			}
+		});
+		// each arg needs to be array with length of 4 [a,b,c,d] OR 0 []
+		return Transformation.rescale(...transArgs);
+	}
+	set(entry) {
+		if (!(entry instanceof SystemEntry)) {
+			throw new Error('Entry must be instanceof SystemEntry');
+		}
+		if (entry.numDimensions !== this.numDimensions) {
+			throw new Error('Each entry must have same value for numDimensions');
+		}
+		const inputTrans = (entry.domain) ? this.getTransRescale(entry.domain) : null;
+		// this.entries.push({entry: entry, inputTrans: inputTrans});
+	}
+}
+// console.log(new SystemEntry([Transformation.identity(3)], {domain: [[],[],[]]}).domain);
+
 class Field {
-	constructor(space, {transformations = [], domain = [], data = {}} = {}) {
+	constructor(space, transformations = [], data = {}) {
 		if (space instanceof Space) {
 			this.space = space;
 		} else if (space instanceof Array) {
@@ -297,21 +422,21 @@ class Field {
 			throw new Error('Field Error: first argument must be either Space or Array object');
 		}
 		
-		this.points = this.space.vectors.map((pos, i) => new Point(pos, {'field': this, 'fieldIndex': i, 'fieldStepIndexes': this.space.stepIndexes[i]}));
-
-		// this.min = Array(this.numDimensions).fill(Infinity);
-		// this.max = Array(this.numDimensions).fill(-Infinity);
-		// this.updateMinMax();
+		this.points = [...Array(this.numPoints)].map((_,i) => new Point(
+			this.space.getPosition(i),
+			{'fieldStepIndexes': this.space.getCompSet(i), 'fieldIndex': i, 'field': this}
+		));
+		
+		// this.domain = this.dimensions.map(dim => [dim.initial, dim.final]);
+		this.size = this.dimensions.map(dim => dim.size);
+		this.min = this.dimensions.map(dim => dim.min);
+		this.max = this.dimensions.map(dim => dim.max);
 		
 		this.data = data;
 		
-		this.positions = this.space.vectors.map(pos => [...pos]);
-		
-		// system, form, process, layout, setup
-		// this.system = [{transformations: [null], progress: null, dimensions: this.space.dimensions}];
+		// system, process, setup
 		this.system = [];
-		// this.domain = this.dimensions.map(dim => [dim.initial, dim.final]);
-		
+		this.inputTransMap = new Map();
 		this.transformations = [];
 		// this.transform adds any transformations to this.transformations array
 		if (transformations.length > 0) {
@@ -336,15 +461,6 @@ class Field {
 		}
 	}
 	
-	// set system(param = {}) {
-	// 	const {transformations, progress, dimensions} = param;
-	// 	this.system.push(param);
-	// }
-	// get system() {
-	// 	return this._system = this._system ||
-	// 		[{transformations: [null], progress: null, dimensions: this.space.dimensions}];
-	// }
-	
 	// lazy getters
 	get componentCurves() {
 		return this._componentCurves = this._componentCurves ||
@@ -366,7 +482,6 @@ class Field {
 	// Space getters
 	get dimensions() {return this.space.dimensions}
 	get numDimensions() {return this.space.numDimensions}
-	get size() {return this.space.size}
 	get numPoints() {return this.space.numPoints}
 	
 	transformationIdentity() {
@@ -375,17 +490,113 @@ class Field {
 	transformationCollapse(componentKeyPairs) {
 		return Transformation.identity(this.numDimensions, componentKeyPairs);
 	}
-	transformationRescale(...outputArrs) {
-		if (outputArrs.length !== this.numDimensions) {
+	transformationRescale(...domain) {
+		if (domain.length !== this.numDimensions) {
 			throw new Error('number of arguments must be same as this.numDimensions');
 		}
-		const mapArgs = outputArrs.map((outputArr, i) => {
-			// TODO: validate outputArr length, either 0 or 2
-			// TODO: add option for when min and max need to exclude control points
-			if (outputArr.length === 0) return [];
-			return [this.space.min[i], this.space.max[i], outputArr[0], outputArr[1]];
+		// TODO: validate domain length, either 0 or 2
+		// TODO: add option for when initial and final need to exclude control points
+		const transArgs = domain.map((interval, i) => {
+			if (interval.length === 0) {
+				return interval;
+			} else {
+				return [this.dimensions[i].initial, this.dimensions[i].final, interval[0], interval[1]];
+			}
 		});
-		return Transformation.rescale(...mapArgs);
+		return Transformation.rescale(...transArgs);
+	}
+	
+	calcInputTrans(prevDomains, newDomain) {
+		// const entriesWithDomain = this.system.filter(entry => entry.domain);
+		const transArgs = newDomain.map((interval, i) => {
+			if (interval.length === 0) {
+				return interval;
+			} else {
+				const prevInterval = prevDomains.reduceRight((acc, domain) => {
+					return (domain[i].length !== 0) ? domain[i] : acc;
+				}, [this.dimensions[i].initial, this.dimensions[i].final]);
+				return [...prevInterval, ...interval];
+				// const prevInterval = entriesWithDomain.reduceRight((acc, entry) => {
+				// 	return (entry.domain[i].length === 0) ? acc : entry.domain[i];
+				// }, [this.dimensions[i].initial, this.dimensions[i].final]);
+				// return [...prevInterval, ...interval];
+			}
+		});
+		return Transformation.rescale(...transArgs);
+	}
+	calcInputPosition(progress, initialPosition) {
+		const lastEntryHasDomain = this.system[this.system.length - 1].domain !== null;
+		return this.system
+			.filter(entry => entry.domain)
+			.reduce((pos, entry, i, entriesWithDomain) => {
+				// use progress when last entry in system has domain AND when i corresponds to last entry in filtered system
+				const transProgress = (lastEntryHasDomain && i === entriesWithDomain.length - 1) ? progress : 1;
+				return entry.inputTrans.calc(pos, transProgress);
+			}, initialPosition);
+	}
+	calcPointPosition(progress, point, inputPosition) {
+		return this.system.reduceRight((position, entry, i) => {
+			// use progress for last entry in system
+			const transProgress = (i === this.system.length - 1) ? progress : 1;
+			return entry.transformations.reduceRight((pos, trans) => {
+				return trans.calc(pos, transProgress, point, this);
+			}, position);
+		}, inputPosition);
+	}
+	
+	// transforms this.points and adds transformations to this.transformations array, returns this
+	transform(transformations, progress = 1, domain = null) {
+		if (domain) {
+			// TODO: use try/except
+			// this.validateDomain(domain)
+			if (domain instanceof Array) {
+				if (domain.length !== this.numDimensions) {
+					throw new Error('domain must have length equal to this.numDimensions');
+				} else {
+					domain.forEach((range,i) => {
+						if (range instanceof Dimension) {
+							if (range.size !== this.size[i]) {
+								throw new Error('each Dimension element of domain must have the same size of the corresponding element in this.size: domain[i].size === this.size[i]');
+							}
+						} else if (range instanceof Array) {
+							if (range.length < 0 || range.length > 2) {
+								throw new Error('each Array element of domain must have a length from 0 to 2');
+							}
+						} else {
+							throw new Error('each element of domain must be either Dimension or Array object');
+						}
+					})
+				}
+			} else {
+				throw new Error('domain must be an Array');
+			}
+		}
+		
+		const prevDomains = this.system.filter(entry => entry.domain).map(entry => entry.domain);
+		const entry = {
+			transformations: transformations,
+			progress: progress,
+			domain: domain,
+			inputTrans: (domain) ? this.calcInputTrans(prevDomains, domain) : null
+		};
+		if (domain) this.inputTransMap.set(this.system.length, this.calcInputTrans(prevDomains, domain));
+		this.system.push(entry);
+		
+		// const getPointPos = curriedCalcPointPosition(progress, this);
+		// const getInputPos = curriedCalcInputPosition(progress, this.system);
+		// entries with domain will also have inputTrans
+		this.points.forEach((point, i) => {
+			// point.position = compose(getPointPos(point), getInputPos)(this.space.getPosition(i));
+			// point.position = getPointPos(point, getInputPos(this.space.getPosition(i)));
+			const inputPosition = this.calcInputPosition(progress, this.space.getPosition(i));
+			point.position = this.calcPointPosition(progress, point, inputPosition);
+		});
+		
+		return this;
+	}
+	// calls transform method on clone of this, returns transformed clone
+	transformClone(transformations, progress, domain) {
+		return Field.clone(this).transform(...arguments);
 	}
 	
 	collapse(componentKeyPairs, progress) {
@@ -398,108 +609,12 @@ class Field {
 	// 		}
 	// 	}
 	// 	return this;
-		return this.transform(this.transformationCollapse(componentKeyPairs), {progress: progress});
+		return this.transform(this.transformationCollapse(componentKeyPairs), progress);
 	}
-	collapseMap(componentKeyPairs, progress) {
-		return Field.clone(this).collapse(componentKeyPairs, progress);
+	collapseClone(componentKeyPairs, progress) {
+		return Field.clone(this).collapse(...arguments);
 	}
 	// extrude() 
-	
-	getSystemInputTrans(inputRange) {
-		// TODO: validate that inputRange.length = this.numDimensions
-		const rangeEntries = this.system.filter(obj => obj.inputRange !== null);
-		// true inputRange is the first added to the system
-		if (rangeEntries.length === 0) {
-			return this.transformationRescale(...inputRange);
-		} else {
-			const inputOutputArrs = rangeEntries.map((obj, i, arr) => {
-				return inputRange.map((_, j) => {
-					if (obj.inputRange[j].length === 0) {
-						return [];
-					} else {
-						let inputPrev = [this.space.min[j], this.space.max[j]];
-						for (let k = i; k > 0; k--) {
-							const rangePrev = arr[k-1].inputRange[j];
-							if (rangePrev.length === 0) {
-								continue;
-							} else if (rangePrev.length > 0) {
-								inputPrev = rangePrev;
-								break;
-							} else {
-								break;
-							}
-						}
-						return [...inputPrev, ...inputRange[j]];
-					}
-				});
-			});
-			return Transformation.rescale(...inputOutputArrs);
-		}
-	}
-	
-	// transforms this.points and adds transformations to this.transformations array, returns this
-	transform(transformations, {progress = 1, inputRange = null} = {}) {
-		if (inputRange) {
-			// TODO: use try/except
-			// this.validateInputRange(inputRange)
-			if (inputRange instanceof Array) {
-				if (inputRange.length !== this.numDimensions) {
-					throw new Error('inputRange must have length equal to this.numDimensions');
-				} else {
-					inputRange.forEach((range,i) => {
-						if (range instanceof Dimension) {
-							if (range.size !== this.size[i]) {
-								throw new Error('each Dimension element of inputRange must have the same size of the corresponding element in this.size: inputRange[i].size === this.size[i]');
-							}
-						} else if (range instanceof Array) {
-							if (range.length < 0 || range.length > 2) {
-								throw new Error('each Array element of inputRange must have a length from 0 to 2');
-							}
-						} else {
-							throw new Error('each element of inputRange must be either Dimension or Array object');
-						}
-					})
-				}
-			} else {
-				throw new Error('inputRange must be an Array');
-			}
-		}
-		
-		this.system.push({
-			transformations: transformations,
-			progress: progress,
-			inputRange: inputRange,
-			inputTrans: (inputRange) ? this.getSystemInputTrans(inputRange) : null,
-			systemIndex: this.system.length
-		});
-		
-		// set variable so filter isn't performed for every point
-		// entries with inputRange will also have inputTrans
-		const inputRangeEntries = this.system.filter(obj => obj.inputRange !== null);
-		const lastEntryHasRange = this.system[this.system.length - 1].inputRange !== null;
-		this.points.forEach((point, i) => {
-			const inputPosition = inputRangeEntries.reduce((position, obj, j, arr) => {
-				// use progress when obj is last entry in transArr AND when last entry in this.system has inputRange
-				const inputTransProgress = (lastEntryHasRange && j === arr.length - 1) ? progress : 1;
-				return obj.inputTrans.calc(position, inputTransProgress);
-			}, this.positions[i]);
-			
-			point.position = this.system.reduceRight((position, obj, j, sys) => {
-				// use progress when obj is last in entry in this.system
-				const transProgress = (j === sys.length - 1) ? progress : 1;
-				return obj.transformations.reduceRight((pos, trans) => {
-					return trans.calc(pos, transProgress, point, this);
-				}, position);
-			}, inputPosition);
-		});
-		
-		return this;
-	}
-		
-	// calls transform method on clone of this, returns transformed clone
-	transformClone(transformations, {progress, inputRange} = {}) {
-		return Field.clone(this).transform(transformations, {progress: progress, inputRange: inputRange});
-	}
 	
 	getCurveMesh({hideOuterCurves = false} = {}) {
 		const options = {
@@ -556,8 +671,8 @@ class Field {
 			const point = this.points[i];
 			// point gets added once to each dimension of curve sets
 			//// point will be part of n curves, where n = this.numDimensions = point.data.fieldComponents.length
-			// this.space.getStepIndices(i).forEach((dimensionIndex, j, arr) => {
-			this.space.stepIndexes[i].forEach((dimensionIndex, j, arr) => {
+			this.space.getCompSet(i).forEach((dimensionIndex, j, arr) => {
+			// this.space.stepIndexes[i].forEach((dimensionIndex, j, arr) => {
 				//////////////////
 				if (dimensionless[j]) return;
 				// convert point's fieldComponets to curve set index 
@@ -607,12 +722,6 @@ class Field {
 		}
 		return arr;
 	}
-	getPosition(index) {
-		if (index < 0 || index >= this.numPoints) {
-			throw new Error('position index out of range');
-		}
-		
-	}
 }
 
 // TODO: REFACTOR
@@ -637,15 +746,15 @@ class FieldAnimation {
 		for (let i = 1; i < this.keyframes.length; i++) {
 			const keyframePrev = this.keyframes[i-1];
 			const keyframe = this.keyframes[i];
-			const numFramesInFrameSet = Math.round((keyframe.progress - keyframePrev.progress) / 100 * numFrames);
+			const numFramesInFrameSet = Math.round((keyframe.percent - keyframePrev.percent) / 100 * numFrames);
 			const stepInterval = 1/(numFramesInFrameSet-1);
-			const framesArr = [...Array(numFramesInFrameSet)].map((_, i) => currentField.transformClone(keyframe.transformations, {progress: i*stepInterval, inputRange: keyframe.inputRange}));
+			const framesArr = [...Array(numFramesInFrameSet)].map((_, i) => currentField.transformClone(keyframe.transformations, i*stepInterval, keyframe.domain));
 			
 			this.frameSet[i-1] = framesArr;
 			this.frames.push(...framesArr);
 			
 			if (i !== this.keyframes.length - 1) {
-				currentField = currentField.transform(keyframe.transformations, {inputRange: keyframe.inputRange});
+				currentField = currentField.transform(keyframe.transformations, 1, keyframe.domain);
 			}
 		}
 	}
@@ -657,7 +766,6 @@ class FieldAnimation {
 		}
 	}
 }
-
 class PointAnimation {
 	constructor(numFrames, point, keyframes) {
 		this.numFrames = numFrames;
@@ -678,9 +786,9 @@ class PointAnimation {
 		for (let i = 1; i < this.keyframes.length; i++) {
 			const keyframePrev = this.keyframes[i-1];
 			const keyframe = this.keyframes[i];
-			const numFramesInFrameSet = Math.round((keyframe.progress - keyframePrev.progress) / 100 * numFrames);
+			const numFramesInFrameSet = Math.round((keyframe.percent - keyframePrev.percent) / 100 * numFrames);
 			const stepInterval = 1/(numFramesInFrameSet-1);
-			const framesArr = [...Array(numFramesInFrameSet)].map((_, i) => currentPoint.transformClone(keyframe.transformations, {progress: i*stepInterval}));
+			const framesArr = [...Array(numFramesInFrameSet)].map((_, i) => currentPoint.transformClone(keyframe.transformations, i*stepInterval));
 			
 			this.frameSet[i-1] = framesArr;
 			this.frames.push(...framesArr);
@@ -762,11 +870,11 @@ let field3DCollapsed = new Field([
 
 // console.log(dimTheta.elements);
 // console.log(dimTheta.getRescaledElements([50,100], .5));
-// console.log(dimTheta.getRescaledDimension([50,100], .5).elements);
+console.log(dimTheta.rescale([50,100], .5));
 // let field2D = new Field([dimR.extend(), dimTheta.extend()]);
 let field2D = new Field([dimR, dimTheta]);
 let field2D_mesh = Field.clone(field2D);
-console.log(field2D);
+console.log(field2D.space);
 
 let extrudeX = new Transformation((step) => [
 	(x,y) => step*(x*50-c),
@@ -779,9 +887,9 @@ let collapseX = new Transformation((step,point) => [
 	function(x,y) {
 		const field = point.data.field;
 		// const points = field.points.filter(p => !isEdgePoint(p));
-		const a = field.space.min[0];
+		const a = field.min[0];
 		// const min = field.dimensions[0].initial;
-		const b = field.space.max[0];
+		const b = field.max[0];
 		return step*((x-a)*(d-c)/(b-a)+c);
 	},
 	(x,y) => y
@@ -790,28 +898,30 @@ let collapseX = new Transformation((step,point) => [
 // Animation
 const numFrames = 400;
 // TODO: update so progress gets ordered automatically 
+console.time('animation2D');
 let animation2D = field2D.getAnimation(numFrames, [
-	{progress: 0},
-	{progress: 25, transformations: [transRadial]},
-	{progress: 50, transformations: [transWavy]},
-	// {progress: 70, transformations: [transScale1]},
-	// {progress: 65, transformations: [collapseX]},
-	// {progress: 100, transformations: [extrudeX]}
-	{progress: 75, transformations: [transWavy,transScale], inputRange: [[0,300],[-2*Math.PI,0]]},
-	{progress: 100, transformations: [field2D.transformationRescale([],[-4*Math.PI,0])]}
+	{percent: 0},
+	{percent: 25, transformations: [transRadial]},
+	{percent: 50, transformations: [transWavy], domain: [[0,400],[0,Math.PI/2]]},
+	// {percent: 70, transformations: [transScale1]},
+	// {percent: 65, transformations: [collapseX]},
+	// {percent: 100, transformations: [extrudeX]}
+	{percent: 100, transformations: [transWavy,transWavy], domain: [[0,200],[Math.PI,-Math.PI]]}
+	// {percent: 100, transformations: [field2D.transformationRescale([0,5],[-4*Math.PI,0])]}
 ]);
-console.log(animation2D.frames.slice(-1)[0].system);
+console.timeEnd('animation2D');
+// console.log(animation2D.frames.slice(-1)[0].system);
 let animation3D = field3D.getAnimation(numFrames, [
-	{progress: 0},
-	// {progress: 0, transformations: [transSpherical]},
-	{progress: 20, transformations: [field3D.transformationCollapse([[1,0]])]},
-	// {progress: 60, transformations: [collapseX]},
-	// {progress: 100, transformations: [extrudeX]}
+	{percent: 0},
+	// {percent: 0, transformations: [transSpherical]},
+	{percent: 20, transformations: [field3D.transformationCollapse([[1,0]])]},
+	// {percent: 60, transformations: [collapseX]},
+	// {percent: 100, transformations: [extrudeX]}
 ]);
 let animation3DCollapsed = field3DCollapsed.getAnimation(numFrames, [
-	{progress: 0, transformations: [transSpherical]},
-	{progress: 50, transformations: [extrudeX]},
-	{progress: 100, transformations: [field3DCollapsed.transformationCollapse([[1,0]])]}
+	{percent: 0, transformations: [transSpherical]},
+	{percent: 50, transformations: [extrudeX]},
+	{percent: 100, transformations: [field3DCollapsed.transformationCollapse([[1,0]])]}
 ]);
 
 // Curves
@@ -819,15 +929,12 @@ let animationCurveSet2D = animation2D.frames.map(field => field.getCurveMesh({"h
 // let animationCurveSet3D = animation3DCollapsed.frames.map(field => field.getCurveMesh({"hideOuterCurves": true}));
 let animationCurveSet3D = animation3D.frames.map(field => field.getCurveMesh({"hideOuterCurves": true}));
 let mesh = field2D_mesh
-	.transformClone(
-		[transRadial],
-		{progress: 1, inputRange: [[],[0,2*Math.PI]]}
-	)
+	.transformClone([transRadial], 1, [[],[0,2*Math.PI]])
 	// .transformClone(
 	// 	[field2D.transformationRescale([],[0,2*Math.PI])],
 	// 	{progress: 0}
 	// )
-	// {progress: 1, inputRange: [[],[0,2*Math.PI]]})
+	// {progress: 1, domain: [[],[0,2*Math.PI]]})
 	.getCurveMesh({"hideOuterCurves": true});
 
 const fps = 60;
