@@ -97,10 +97,13 @@ class Transformation {
 		// inputOutputArr ~ [inputInitial, inputFinal, outputInitial, outputFinal] OR []
 		const numDimensions = inputOutputArrs.length;
 		const funcArr = inputOutputArrs.map((inputOutputArr, i) => {
-			if (inputOutputArr.length === 0) {
-				return Transformation.identityComponent(numDimensions, i);
-			} else {
-				return Transformation.rescaleComponent(numDimensions, i, inputOutputArr);
+			switch (inputOutputArr.length) {
+				case 0:
+					return Transformation.identityComponent(numDimensions, i);
+				case 2:
+					return Transformation.rescaleByIndexComponent(numDimensions, i, inputOutputArr);
+				case 4:
+					return Transformation.rescaleComponent(numDimensions, i, inputOutputArr);
 			}
 		});
 		return Transformation.fromFuncArr(funcArr, {progressMethod: 'multiplyAfter'});
@@ -188,6 +191,7 @@ class Curve {
 
 class Point {
 	constructor(position, dataObject) {
+		this.numDimensions = position.length;
 		this.position = position;
 		this.data = dataObject;
 	}
@@ -197,11 +201,6 @@ class Point {
 		for (let component of this.position) {
 			yield component;
 		}
-	}
-	
-	// getters
-	get numDimensions() {
-		return this.position.length;
 	}
 	
 	clone() {
@@ -363,71 +362,103 @@ class Space {
 	}
 }
 
-class SystemEntry {
-	constructor(transformations, {progress = 1, domain = null} = {}) {
-		if (!(transformations instanceof Array) || transformations.length === 0) {
-			throw new Error('First argument must be instanceof Array with at least one element');
+class FieldEntry {
+	constructor(transformations, progress = 1, dimensions = [...Array(transformations[0].numDimensions)].map(() => [])) {
+		if (!(transformations instanceof Array) || !transformations.every(trans => trans instanceof Transformation)) {
+			throw new Error('transformations must be instanceof Array where each element is an instanceof Transformation');
 		}
-		if (transformations.some(trans => !(trans instanceof Transformation))) {
-			throw new Error('Each element of transformations array must be instanceof Transformation');
+		const objPropsAreEqual = (objArr, propName) => objArr.reduce((bool, el, i, arr) => {
+			if (i === 0) {
+				return bool;
+			}
+			return (bool) ? arr[i-1][propName] === el[propName] : bool;
+		}, true);
+		if (!objPropsAreEqual(transformations, 'numDimensions')) {
+			console.log(transformations);
+			throw new Error('each transformation must have the same value for numDimensions');
+		}
+		if (!(dimensions instanceof Array) || !dimensions.every(dim => dim instanceof Dimension || (dim instanceof Array && dim.length === 0))) {
+			throw new Error('dimensions must be instanceof Array where each element is either an instanceof Dimension or an empty Array');
 		}
 		
 		this.numDimensions = transformations[0].numDimensions;
-		if (transformations.length > 1 && transformations.some(trans => trans.numDimensions !== this.numDimensions)) {
-			throw new Error('Each Transformation must have same value for numDimensions');
-		}
 		this.transformations = transformations;
-		
 		this.progress = progress;
+		this.dimensions = dimensions;
+		// equivalent to this.dimensions.some(el => el instanceof Dimension)
+		// equivalent to this.dimensions.some(el => !(el instanceof Array))
+		this.hasDimensions = this.dimensions.some(el => el.length !== 0);
 		
-		if (domain !== null && !(domain instanceof Array)) {
-			throw new Error('domain must be either instanceof Array or null');
-		}
-		if (domain instanceof Array) {
-			if (domain.length !== this.numDimensions) {
-				throw new Error('Number of elements in domain must be equal to numDimensions');
-			}
-			if (domain.some(interval => !(interval instanceof Array) || (interval.length !== 0 && interval.length !== 2))) {
-				throw new Error('Each element in domain must be instanceof Array with length of either 0 or 2');
-			}			
-		}
-		// use null if each element in domain is empty: [[],[],..., []]
-		this.domain = (domain instanceof Array && domain.every(interval => interval.length === 0))
-			? null
-			: domain;
+		Object.freeze(this);
+	}
+	
+	transform(position, point) {
+		return this.transformations.reduceRight((pos, trans) => {
+			return trans.calc(pos, this.progress, point);
+		}, position);
 	}
 }
-class System {
-	constructor(...entries) {
-		this.numDimensions = entries[0].numDimensions;
-		this.domainDefault = [...Array(this.numDimensions)].map(() => [0,10]);
-		this.entries = entries.map(entry => this.set(entry));
+
+class FieldSystem {
+	constructor(field, ...entries) {
+		this.field = field;
+		
+		this.dimensionTransformations = []
+		this.entries = [];
+		if (entries.length > 0) {
+			entries.forEach(entry => this.addEntry(entry));
+		}
 	}
-	getTransRescale(domain) {
-		const transArgs = domain.map((interval, i) => {
-			if (interval.length === 0) {
-				return interval;
+	
+	clone() {
+		let clone = new FieldSystem(this.field);
+		clone.dimensionTransformations = this.dimensionTransformations.slice(0);
+		clone.entries = this.entries.slice(0);
+		return clone;
+	}
+	
+	addEntry(entry) {
+		// dimTrans must be determined BEFORE entry is added to this.entries
+		const dimTrans = (entry.hasDimensions) ? this.getDimensionTransformation(entry.dimensions) : null;
+		this.dimensionTransformations.push(dimTrans);
+		this.entries.push(entry);
+		
+		return this;
+	}
+	
+	getDimensionTransformation(outputDimensions) {
+		if (outputDimensions.length !== this.field.numDimensions) {
+			throw new Error('number of arguments must equal numDimensions');
+		}
+		
+		const rescaleArgs = outputDimensions.map((outputDim, dimIndex) => {
+			if (outputDim instanceof Array) {
+				return outputDim;
 			} else {
-				const entriesWithDomain = this.entries.filter(entry => entry.domain);
-				const prevRange = entriesWithDomain.reduceRight((acc, entry) => {
-					const range = entry.domain[i];
-					return (range.length !== 0) ? range : acc;
-				}, this.domainDefault[i]);
-				return [prevRange[0], prevRange[1], interval[0], interval[1]];
+				const inputInterval = this.dimensionTransformations.reduceRight((interval, dimTrans, i) => {
+					const dim = (dimTrans) ? this.entries[i].dimensions[dimIndex] : null;
+					return (dim instanceof Dimension) ? dim.interval : interval;
+				}, this.field.dimensions[dimIndex].interval);
+				if (inputInterval[0] === inputInterval[1]) {
+					return outputDim.interval;
+				}
+				return [...inputInterval, ...outputDim.interval];
 			}
 		});
-		// each arg needs to be array with length of 4 [a,b,c,d] OR 0 []
-		return Transformation.rescale(...transArgs);
+		
+		return Transformation.rescale(...rescaleArgs);
 	}
-	set(entry) {
-		if (!(entry instanceof SystemEntry)) {
-			throw new Error('Entry must be instanceof SystemEntry');
-		}
-		if (entry.numDimensions !== this.numDimensions) {
-			throw new Error('Each entry must have same value for numDimensions');
-		}
-		const inputTrans = (entry.domain) ? this.getTransRescale(entry.domain) : null;
-		// this.entries.push({entry: entry, inputTrans: inputTrans});
+	
+	calcDomainPosition(point, initialPosition = this.field.space.getPosition(point.data.fieldIndex)) {
+		return this.dimensionTransformations
+			.reduce((position, dimTrans, i) => {
+				return (dimTrans) ? dimTrans.calc(position, this.entries[i].progress, point) : position;
+			}, initialPosition);
+	}
+	calcPointPosition(point, domainPosition = this.calcDomainPosition(point)) {
+		return this.entries.reduceRight((position, entry) => {
+			return entry.transform(position, point);
+		}, domainPosition);
 	}
 }
 
@@ -453,13 +484,13 @@ class Field {
 		
 		this.data = data;
 		
-		this.system = [];
+		this.system = new FieldSystem(this);
 	}
 	
 	static clone(self) {
 		let fieldClone = Object.assign(Object.create(Object.getPrototypeOf(self)), self);
 		fieldClone.points = fieldClone.points.map(point => point.clone());
-		fieldClone.system = fieldClone.system.slice(0);
+		fieldClone.system = fieldClone.system.clone();
 		// TODO: add deep clone support for arrays, possibly second-level object literals
 		fieldClone.data = Object.assign({}, self.data);
 		return fieldClone;
@@ -506,7 +537,6 @@ class Field {
 			throw new Error('number of arguments must be same as this.numDimensions');
 		}
 		// TODO: validate domain length, either 0 or 2
-		// TODO: add option for when initial and final need to exclude control points
 		const transArgs = outputDomain.map((outputInterval, i) => {
 			if (outputInterval.length === 0) {
 				return outputInterval;
@@ -517,61 +547,15 @@ class Field {
 		return Transformation.rescale(...transArgs);
 	}
 	
-	// system methods
-	getDimensionTransformation(...outputDimensions) {
-		if (outputDimensions.length !== this.numDimensions) {
-			throw new Error('number of arguments must equal numDimensions');
-		}
-		
-		const prevDimensionTransEntries = this.system.filter(entry => entry.dimensionTransformation);
-		const transArgs = outputDimensions.map((outputDim, dimIndex) => {
-			if (outputDim instanceof Array) {
-				return outputDim;
-			} else {
-				const inputInterval = prevDimensionTransEntries.reduceRight((acc, entry) => {
-					const dim = entry.dimensions[dimIndex];
-					return (dim instanceof Dimension) ? dim.interval : acc;
-				}, this.dimensions[dimIndex].interval);
-				if (inputInterval[0] === inputInterval[1]) {
-					return outputDim.interval;
-				}
-				return [...inputInterval, ...outputDim.interval];
-			}
-		});
-		const funcArr = transArgs.map((arg, i) => {
-			if (arg.length === 0) {
-				return Transformation.identityComponent(this.numDimensions, i);
-			} else if (arg.length === 2) {
-				const trans = Transformation.rescaleByIndexComponent(this.numDimensions, i, arg);
-				return Transformation.rescaleByIndexComponent(this.numDimensions, i, arg);
-			} else {
-				return Transformation.rescaleComponent(this.numDimensions, i, arg);
-			}
-		});
-		return Transformation.fromFuncArr(funcArr, {progressMethod: 'multiplyAfter'});
-		// return Transformation.rescale(...transArgs);
-	}
-	calcDomainPosition(point, initialPosition = this.space.getPosition(point.data.fieldIndex)) {
-		return this.system
-			.filter(entry => entry.dimensionTransformation)
-			.reduce((position, entry) => {
-				return entry.dimensionTransformation.calc(position, entry.progress, point);
-			}, initialPosition);
-	}
-	calcPointPosition(point, domainPosition = this.calcDomainPosition(point)) {
-		return this.system.reduceRight((position, entry) => {
-			return entry.transformations.reduceRight((pos, trans) => {
-				return trans.calc(pos, entry.progress, point, this);
-			}, position);
-		}, domainPosition);
+	positionTransformed(point) {
+		return this.system.calcPointPosition(point);
 	}
 	
-	// transforms this.points and adds transformations to this.transformations array, returns this
 	transform(transformations, progress = 1, dimensions = [...Array(this.numDimensions)].map(() => []), extend = false) {
 		// dimensions: Array with (length === this.numDimensions)
 		// dimensions[i]: Dimension with (size === this.size[i]) || Array with (length >= 0 && length <= 2) corresponding to initial and final values of dimension
 		if (!(dimensions instanceof Array) || dimensions.length !== this.numDimensions) {
-			throw new Error('dimensions must be instanceof Array with length equal to this.numDimensions');
+			throw new Error('dimensions must be instanceof Array with length equal to numDimensions');
 		} else {
 			dimensions.forEach((el, i) => {
 				if (!(el instanceof Dimension) && !(el instanceof Array)) {
@@ -587,7 +571,7 @@ class Field {
 		}
 		
 		// cast every non-empty element in dimensions to instanceof Dimension
-		dimensions = dimensions.map((el, i) => {
+		const getFormattedDimensions = (dimensions) => dimensions.map((el, i) => {
 			if (el.length === 0) {
 				return el;
 			}
@@ -595,21 +579,15 @@ class Field {
 			return (extend) ? dimension.extend() : dimension;
 		});
 		
-		const dimensionTransformation = (dimensions.some(dim => dim instanceof Dimension)) ? this.getDimensionTransformation(...dimensions) : null;
-		const entry = {
-			transformations: transformations,
-			progress: progress,
-			dimensions: dimensions,
-			dimensionTransformation: dimensionTransformation
-		};
-		this.system.push(entry);
-		
-		this.points.forEach(point => point.position = this.calcPointPosition(point));
+		this.system.addEntry(new FieldEntry(transformations, progress, getFormattedDimensions(dimensions)));
+		this.points.forEach(point => {
+			point.position = this.positionTransformed(point);
+		});
 		
 		return this;
 	}
 	// calls transform method on clone of this, returns transformed clone
-	transformClone(transformations, progress, domain) {
+	transformClone(transformations, progress, dimensions, extend) {
 		return Field.clone(this).transform(...arguments);
 	}
 	
