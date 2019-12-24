@@ -394,7 +394,7 @@ class FieldEntry {
 		
 		this.domain = domains[domains.length - 1] || null;
 		this.hasDomain = this.domain !== null;
-		this.domainTransformation = (this.hasDomain) ? Field.rescale(this.numDimensions, ...domains) : null;
+		this.domainTransformation = (this.hasDomain) ? Field.rescale(...domains) : null;
 		
 		Object.freeze(this);
 	}
@@ -485,58 +485,62 @@ class Field {
 	get numDimensions() {return this.space.numDimensions}
 	get numPoints() {return this.space.numPoints}
 	
-	static rescale(numDimensions, ...domains) {
-		// domains: Array of domains with length >= 2
-		// [domainStart, ..., domainStop]
-		//// domain: Array of intervals with length of numDimensions
-		//// note: any domain where all intervals have length of 0 will be omitted
-		//// [interval_1, interval_2, ..., interval_numDimensions]
-		////// interval: Array of numbers with length of 0 or 2
-		////// [] || [initial, final]
-
-		if (!domains.every(domain => (domain instanceof Array) && domain.length === numDimensions)) {
-			throw new Error('Each domain must be an instanceof Array with length of numDimensions');
+	static rescale(...domains) {
+		if (domains.some(domain => !(domain instanceof Array))) {
+			throw new Error('Each domain must be an instanceof Array');
+		}
+		if (domains.some((domain, _, domainArr) => domain.length !== domainArr[0].length)) {
+			throw new Error('Each domain must be the same length, which corresponds to numDimensions');
 		}
 		if (domains.some(domain => domain.some(interval => interval.length !== 0 && interval.length !== 2))) {
 			throw new Error('Each domain interval must have length of either 0 or 2');
 		}
 		
-		// remove any domain where all intervals have length of 0 ([[],[],...,[]])
-		domains = domains.filter(domain => domain.some(interval => interval.length !== 0));
-		if (domains.length < 2) {
-			throw new Error('Must provide at least 2 domains [domainStart, domainStop] that have a non-empty interval');
-		}
-
-		const numIntervalsPerDimension = domains.reduce((numArr, domain) => {
-			return numArr.map((num, i) => (domain[i].length !== 0) ? num + 1 : num);
-		}, [...Array(numDimensions)].fill(0));
-		if (numIntervalsPerDimension.every(numIntervals => numIntervals === 1)) {
-			throw new Error('Must provide an outputInterval for at least one component of domains');
-		}
+		// domains: Array of at least 2 domains that have non-empty interval(s)
+		// [domainStart, ..., domainStop]
+		//// domain: Array of intervals
+		//// note: any domain where all intervals have length of 0 will be omitted
+		//// [interval_1, interval_2, ..., interval_numDimensions]
+		////// interval: Array of numbers with length of 0 or 2
+		////// [] || [initial, final]
 		
-		// TODO: REFACTOR
-		// [x0, y0, z0], [x1, y1, z1], [x2, y2, z2]
-		////
-		//// domains:							[x0, y0, _], [x1, y1, z1], [x2, _, _], [x3, y3, _], [_, _, _]
-		//// consolidate components >>>	[x0, x1, x2, x3], [y0, y1, y3], [z1]
-		//// slice intervals >>>			[x2, x3], [y1, y3], []
-		//// destructure intervals >>>	[x2_i, x2_f, x3_i, x3_f], [y1_i, y1_f, y3_i, y3_f], []
+		// [[x0, y0, ..., z0], [x1, y1, ..., z1], ..., [x_n-1, y_n-1, ..., z_n-1]]
+		// EXAMPLE //
+		// domains: [[x0, _, _], [x1, _, z1], [x2, _, _], [x3, y3, _], [_, _, _]]	<<< domains
+		//// filter empty domains:
+		//// [[x0, _, _], [x1, _, z1], [x2, _, _], [x3, y3, _]]		<<< domains
+		//// separate last domain (whose intervals will be used as output) from all previous domains:
+		//// [x3, y3, _]											<<< outputIntervals
+		//// [[x0, _, _], [x1, _, z1], [x2, _, _]]		<<< domainsInput
+		//// get input interval for each dimension (last non-empty interval for each dimension, if provided)
+		//// [x2, _, z1]											<<< inputIntervals
+		//// combine input and output intervals for each dimension
+		//// [[x2, x3], [_, y3], [z1, _]]
+		//// for each dimension: if neither interval is empty, return combined input and output; else return empty array:
+		//// [[x2_i, x2_f, x3_i, x3_f], [], []]			<<< inputOutputLists
+		//// throw error if every dimension results in an empty array
 		
-		const domainStop = domains[domains.length - 1];
-		const domainsStart = domains.slice(0,-1);
-		const inputOutputArrs = domainStop.map((outputInterval, dimIndex) => {
-			const dimIntervals = domainsStart.map(domain => domain[dimIndex]);
-			if (outputInterval.length === 0 || dimIntervals.every(interval => interval.length === 0)) {
-				return [];
-			}
-			// use last available non-empty interval for rescale input
-			const inputInterval = dimIntervals.reduce((acc, interval) => {
-				return (interval.length !== 0) ? interval : acc;
-			});
-			return [...inputInterval, ...outputInterval];
+		// remove empty domains (any domain where all intervals have length of 0)
+		const domainsFiltered = domains.filter(domain => domain.some(interval => interval !== 0));
+		
+		const outputIntervals = domainsFiltered[domainsFiltered.length - 1];
+		const inputIntervals = domainsFiltered.slice(0,-1)
+			.reduceRight((intervals, domain) => {
+				return intervals.map((interval, dimIndex) => {
+					return (interval.length === 0) ? domain[dimIndex] : interval;
+				});
+			}, outputIntervals.map(() => []));
+		
+		const inputOutputLists = outputIntervals.map((output, dimIndex) => {
+			const input = inputIntervals[dimIndex];
+			return (input.length !== 0 && output.length !== 0) ? [...input, ...output] : [];
 		});
 		
-		return Transformation.rescale(inputOutputArrs);
+		if (inputOutputLists.every(ioList => ioList.length === 0)) {
+			throw new Error('Must provide both an input and output interval for at least one dimension of domains');
+		}
+		
+		return Transformation.rescale(inputOutputLists);
 	}
 	
 	transformationIdentity() {
@@ -546,7 +550,7 @@ class Field {
 		return Transformation.identity(this.numDimensions, componentKeyPairs);
 	}
 	transformationRescale(...domainsStop) {
-		return Field.rescale(this.numDimensions, this.domain, ...domainsStop);
+		return Field.rescale(this.domain, ...domainsStop);
 	}
 	
 	calcDomainPosition(point, entries, initialPosition = this.space.getPosition(point.data.fieldIndex)) {
@@ -719,10 +723,8 @@ class Field {
 		return arr;
 	}
 }
-var TEST = true;
 // TODO: address issue for when intervalInitial === intervalFinal (add option for how to handle), or separate Transformation method (rescaleFieldIndex)
-console.log(Field.rescale(2, [[0,20],[2,3]], [[],[1,2]]).calc([12,34]));
-TEST = false;
+console.log(Field.rescale([[0,20],[2,3]], [[],[]], [[],[3,4]]).calc([12,34]));
 
 class FieldKeyframe {
 	// [%, FieldEntry]
@@ -966,14 +968,7 @@ let collapseX = new Transformation((step,point) => [
 const numFrames = 300;
 // TODO: update so percent gets ordered automatically
 console.time('animation2D');
-// field2D.getAnimation(function(numFrames) {
-// 	return [
-// 		keyframe0,
-// 		keyframe1,
-// 		keyframe2,
-// 		{percent: 100, transformations: [this.identity()], domain: this.extend([[0,10],[]])}
-// 	];
-// });
+
 let animation = new Animation(
 	field2D,
 	(target) => [
